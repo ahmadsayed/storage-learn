@@ -225,7 +225,7 @@ Half the replicas are gone, the cluster is degraded, and a brand-new pod on a
 surviving node mounted the volume and read every byte. That is what the extra
 copy bought.
 
-## Step 5 — Bring the node back, and watch the simulation end
+## Step 5 — Bring the node back, and destroy an OSD by accident
 
 ```bash
 docker start csilab-worker
@@ -255,20 +255,75 @@ reraise_fatal: default handler for signal 6 didn't terminate the process?
 
 `activate` succeeds — the log even shows it finding `/dev/loop100` and symlinking
 it — and then Rook's `expand-bluefs` init container dies on an assertion inside
-`ceph-bluestore-tool`.
+`ceph-bluestore-tool`. The first two explanations that came to mind were both
+wrong, and the real one is worth the next three paragraphs.
 
-> 🧪 **Lab Hack, and its limit:** this is where the fake disk stops behaving like a
-> disk. A BlueStore OSD on a real device restarts and rejoins the cluster; on a
-> loop device whose backing file lived inside the container that was just stopped,
-> the bluestore metadata does not survive the round trip cleanly. The recovery in
-> this lab is to treat the OSD as a failed disk: remove it from the CRUSH map,
-> wipe the device and let Rook re-provision it, after which Ceph **backfills** the
-> missing copies from `osd.0` — which is a real and useful drill, and also a good
-> illustration of what `size: 2` costs and buys.
+> ⚠️ **The actual cause: this lesson's own recovery command wiped the OSD.**
+> `prepare-disks.sh` used to finish its Ceph section with
+> `wipefs -a /dev/loopN`, on the reasoning that a lab device sometimes needs its
+> old signatures cleared. Run against a cluster that already had an OSD on that
+> device, it erased the OSD's **BlueStore metadata** — and `ceph-bluestore-tool`
+> then refused to touch a device that no longer identified itself as an OSD.
 >
-> What you should take from the failure is not "Ceph is fragile" but "a container
-> is not a node": this whole step exists because kind's nodes are processes on one
-> machine with one disk, and Lesson 00 said so out loud before you got here.
+> ```console
+> $ wipefs /dev/loop100          # after the wipe
+> (no output: no signatures at all)
+> $ wipefs /dev/loop101          # the device osd.0 still lives on, for comparison
+> DEVICE   OFFSET TYPE           UUID LABEL
+> loop101  0x0    ceph_bluestore
+> ```
+>
+> Nothing here is a kind problem, and nothing here is a loop-device problem: a
+> setup script that wipes a block device on every run destroys storage, and
+> "prepare" is exactly the kind of script people run twice. The fix is in the
+> script (`wipefs` is now opt-in via `WIPE_OSD_DEVICE=1`, and off by default), and
+> it is verified the same way the bug was found — by re-running the script against
+> the *healthy* OSD's device and checking that its signature survives:
+>
+> ```console
+> $ ../00-cluster-setup/prepare-disks.sh
+> ...
+> left /dev/loop100 signatures alone (WIPE_OSD_DEVICE=1 blanks it on purpose)
+> left /dev/loop101 signatures alone (WIPE_OSD_DEVICE=1 blanks it on purpose)
+> $ wipefs /dev/loop101
+> DEVICE   OFFSET TYPE           UUID LABEL
+> loop101  0x0    ceph_bluestore      <- still an OSD
+> ```
+>
+> What this step actually teaches, then, is the thing every storage course should
+> teach before it teaches replication: **an OSD is a device plus metadata, and the
+> metadata is the part a careless script destroys.** The data on the surviving
+> replica is untouched, which is why the drill below still ends well.
+
+### Recovering from it
+
+The device is now blank, so treat it exactly as a failed disk — which is the same
+procedure as replacing hardware:
+
+```bash
+# 1. take the dead OSD out of the cluster (it is already down)
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd out osd.1
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd crush remove osd.1
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph auth del osd.1
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd rm osd.1
+
+# 2. remove Rook's record of it, then let the operator prepare the blank device
+kubectl -n rook-ceph scale deploy/rook-ceph-osd-1 --replicas=0
+kubectl -n rook-ceph delete deploy rook-ceph-osd-1
+kubectl -n rook-ceph delete job -l app=rook-ceph-osd-prepare
+```
+
+Rook re-runs the OSD prepare for any device in the cluster CR that has no OSD, so
+`loop100` is re-provisioned as a fresh OSD and Ceph **backfills** the missing
+copies from `osd.0` — no data was lost, because `size: 2` meant a second complete
+copy existed the whole time. That backfill is the payoff for the extra copy, and
+it is the same process production runs when a disk is replaced.
+
+> 🎓 **Insight:** the honest version of this step is more useful than the tidy one.
+> A storage lab that only ever shows clean failure and clean recovery teaches you
+> to trust your recovery scripts. This one shows a script destroying an OSD, how it
+> was diagnosed (compare the device's signatures against a healthy peer's), how it
+> was fixed, and why the cluster survived it anyway.
 
 ## Step 6 — Ceph or Longhorn?
 

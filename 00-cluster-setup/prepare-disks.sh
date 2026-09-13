@@ -124,10 +124,22 @@ for NODE in "${targets[@]}"; do
       fi
       losetup -l | grep loop${OSD_IDX}
     "
-    # A block device with a filesystem or a partition table on it is skipped by
-    # Ceph's OSD preparation. Ours is brand new, so it only needs a wipe on a
-    # re-run after a previous lesson left signatures behind.
-    node_sh "$NODE" "wipefs -a /dev/loop${OSD_IDX} >/dev/null 2>&1 || true"
+    # DO NOT wipe device signatures here by default. Doing exactly that was a bug
+    # worth recording: re-running this script against a cluster that already had
+    # Ceph on it wiped a *live* OSD's BlueStore metadata off /dev/loop100. The next
+    # OSD pod then failed in its `expand-bluefs` init container, because
+    # ceph-bluestore-tool was handed a device that no longer looked like an OSD -
+    # which reads exactly like "Ceph is broken on kind" until `wipefs /dev/loop100`
+    # prints nothing at all.
+    #
+    # A brand-new backing file needs no wipe, so this is opt-in: use it only when
+    # you deliberately want a blank device (e.g. re-provisioning a failed OSD).
+    if [ "${WIPE_OSD_DEVICE:-0}" = "1" ]; then
+      node_sh "$NODE" "wipefs -a /dev/loop${OSD_IDX} >/dev/null 2>&1 || true"
+      echo "wiped signatures on /dev/loop${OSD_IDX} because WIPE_OSD_DEVICE=1"
+    else
+      echo "left /dev/loop${OSD_IDX} signatures alone (WIPE_OSD_DEVICE=1 blanks it on purpose)"
+    fi
   else
     say "$NODE — no Ceph disk"
     echo "not a Ceph storage node (only the workers get an OSD device)"
