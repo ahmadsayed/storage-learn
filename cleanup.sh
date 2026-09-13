@@ -21,6 +21,12 @@
 #      still attached to a file inside it leaves the kernel holding a device whose
 #      backing file no longer exists. Detach them BEFORE `kind delete`.
 #
+# Step 3.5 is a caveat on point 3: the detach `docker exec`s into the node, and a
+# mount-namespace-level `losetup -D` does not always reach the host, so the run can
+# end with stale devices anyway. The final section detects them on both the old
+# (`lost`) and the new (`(deleted)`, empty device field) kernel reporting styles,
+# detaches them if sudo is passwordless, and otherwise prints the command to run.
+#
 #   ./cleanup.sh                 # both labs
 #   ./cleanup.sh ceph            # only the Ceph lab (the kind cluster)
 #   ./cleanup.sh longhorn        # only the Longhorn lab (the VMs)
@@ -218,11 +224,38 @@ else
 fi
 
 step "leftovers worth knowing about"
-LEFT=$(losetup -a 2>/dev/null | grep -c lost || true)
+# A loop device whose backing file was deleted inside a node that no longer exists
+# stays attached in the HOST kernel. Detecting that took a fix: the classic marker
+# is the status field reading `lost` — `/dev/loop0: [2049]:12345 (/path (deleted))`
+# — but on newer kernels (6.15 here) the same condition prints an EMPTY device
+# field instead, with no status word at all:
+#
+#   /dev/loop220: []: (/lib/longhorn-disk.img (deleted))
+#
+# Matching only on `lost` therefore finds nothing on a modern host, which is how
+# this script used to print "no stale loop devices" while holding five.
+stale_loops() {
+  losetup -a 2>/dev/null | grep -E 'lost|\(deleted\)' || true
+}
+LEFT=$(stale_loops | grep -c . || true)
 if [ "${LEFT:-0}" -gt 0 ]; then
-  echo "  $LEFT stale (lost) loop devices from an earlier unclean teardown:"
-  losetup -a 2>/dev/null | grep lost | sed 's/^/    /'
-  echo "    harmless until reboot; detach with: sudo losetup -d <device>"
+  echo "  $LEFT stale loop devices: their backing file is gone, the host still holds them"
+  stale_loops | sed 's/^/    /'
+  if sudo -n true 2>/dev/null; then
+    for dev in $(stale_loops | cut -d: -f1); do
+      if sudo -n losetup -d "$dev" 2>/dev/null; then
+        echo "    detached $dev"
+      else
+        echo "    could not detach $dev (still in use)"
+      fi
+    done
+    echo "  remaining: $(stale_loops | grep -c . || echo 0)"
+  else
+    echo "    detaching needs root, which this script does not have; run:"
+    echo "      sudo losetup -d $(stale_loops | cut -d: -f1 | tr '\n' ' ')"
+  fi
+  echo "    (they hold the unlinked backing file open, so its blocks stay allocated;"
+  echo "     a reboot reclaims them, and so does the command above.)"
 else
   echo "  no stale loop devices"
 fi

@@ -143,6 +143,29 @@ devices **before** deleting a cluster: deleting a kind node while a loop device 
 attached to a file inside it leaves the host kernel holding a device whose backing
 file no longer exists.
 
+> ⚠️ **Known limit — that detach does not always reach the host.** The node-side step
+> runs `losetup -D` *inside* the kind node's mount namespace, and the association
+> itself lives in the host kernel. So the teardown can end with the host still
+> holding loop devices whose backing file is gone, which is exactly what happened
+> when this course was recorded — five of them, and `cleanup.sh` reported "no stale
+> loop devices" while they sat there, because it looked for the classic `lost` marker
+> and this kernel (6.15) prints an empty status field instead. The script now detects
+> both forms, reports them, and detaches them itself **if** it can use sudo without a
+> password — otherwise it prints the one command that finishes the job, because
+> detaching a host loop device needs root and this course otherwise assumes none:
+>
+> ```console
+> $ ./cleanup.sh longhorn
+>   5 stale loop devices: their backing file is gone, the host still holds them
+>     /dev/loop101: []: (/lib/rook-osd/osd.img (deleted))
+>     …
+>     detaching needs root, which this script does not have; run:
+>       sudo losetup -d /dev/loop100 /dev/loop101 /dev/loop220 /dev/loop221 /dev/loop222
+> ```
+>
+> They are a leftover, not a hazard: the unlinked file's blocks stay allocated until
+> the association goes, and a reboot clears them.
+
 ## Is this production?
 
 The drivers, the CRDs, the StorageClasses and the failure modes are the real ones.
