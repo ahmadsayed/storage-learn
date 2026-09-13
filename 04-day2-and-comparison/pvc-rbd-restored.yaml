@@ -1,0 +1,17 @@
+# A brand-new RBD image, seeded from the snapshot. Nothing is copied by hand.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rbd-restored
+  namespace: ceph-demo
+spec:
+  storageClassName: rook-ceph-block
+  dataSource:
+    name: rbd-snapshot
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 4Gi

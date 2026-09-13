@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rbd-restored-reader
+  namespace: ceph-demo
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: csilab-worker
+  restartPolicy: Never
+  containers:
+    - name: reader
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          echo "--- contents of the volume restored FROM A SNAPSHOT ---"
+          cat /data/proof.txt
+          df -h /data | tail -1
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: rbd-restored

@@ -1,0 +1,8 @@
+# local IDE / tool state
+.idea/
+
+# scratch area while authoring/running the lab (never committed):
+# the lab kubeconfig, the kubectl wrapper's evidence transcripts, and
+# the upstream checkouts pulled down while recording the lessons
+.csi-lab.kubeconfig
+.storage-lab/

@@ -1,0 +1,44 @@
+# Longhorn 1.12.1 (chart version 1.12.1), sized for a three-node kind lab.
+#
+# Every non-default below is either a lab concession (RAM, tiny disks) or a
+# deliberate choice the lesson talks about. The defaults are what a production
+# cluster would keep.
+persistence:
+  # Create the `longhorn` StorageClass and mark it the cluster default. It is
+  # expandable (allowVolumeExpansion: true) out of the box, unlike the local-path
+  # class this cluster started with in Lesson 01.
+  defaultClass: true
+  # One replica per node. With three storage nodes that is three copies of every
+  # volume, which is the behaviour this lesson demonstrates.
+  defaultClassReplicaCount: 3
+
+csi:
+  # Chart default is 3 replicas of each CSI sidecar. One is enough for a lab and
+  # saves ~8 pods of RAM. NOTE: set these at install time - a later `helm upgrade`
+  # silently ignores them for already-created deployments.
+  attacherReplicaCount: 1
+  provisionerReplicaCount: 1
+  resizerReplicaCount: 1
+  snapshotterReplicaCount: 1
+
+defaultSettings:
+  # Only nodes labelled node.longhorn.io/create-default-disk=true become storage
+  # nodes. Without this, Longhorn creates a default disk on every node it ever
+  # sees, including ones added later by someone else.
+  createDefaultDiskLabeledNodes: true
+  defaultDataPath: /var/lib/longhorn
+  # Our disks are 5GiB. Longhorn refuses to schedule onto a disk with less than
+  # this percentage free, and the 25% default would make a 5GiB disk unschedulable
+  # after two small volumes.
+  storageMinimalAvailablePercentage: 10
+  # Allow scheduling more nominal capacity than the disks physically hold, to show
+  # what thin provisioning means (and what it does not guarantee).
+  storageOverProvisioningPercentage: 200
+  # Longhorn reserves a percentage of each node's CPU for its instance managers.
+  # The default of 12% is ~1.4 CPUs on this 12-CPU host, per node; 5% is plenty
+  # for a lab.
+  guaranteedInstanceManagerCPU: '{"v1":"5","v2":"5"}'
+
+longhornUI:
+  # Chart default is 2 replicas of the UI. One is enough; nobody is on call.
+  replicas: 1

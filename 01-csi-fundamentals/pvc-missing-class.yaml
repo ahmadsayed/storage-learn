@@ -1,0 +1,14 @@
+# The single most common real-world failure: the StorageClass in the manifest
+# does not exist in the cluster. Nothing provisions, and the claim waits forever.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-missing-class
+  namespace: csi-basics
+spec:
+  storageClassName: this-class-does-not-exist
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lh-writer
+  namespace: lh-demo
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: csilab-worker
+  restartPolicy: Never
+  containers:
+    - name: writer
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          echo "written $(date -u +%FT%TZ) by a pod on $(hostname)" > /data/proof.txt
+          sync
+          cat /data/proof.txt
+          df -h /data
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: lh-pvc

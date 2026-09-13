@@ -1,0 +1,64 @@
+# kind cluster for the CSI storage track.
+#
+# This is the "hardware" of the course. Because both storage systems we install
+# (Rook Ceph and Longhorn) are meant to own raw disks and to survive a node
+# failing, the cluster needs three nodes and each worker needs something that
+# looks like a spare disk. kind gives us neither for free, so:
+#
+#   * three nodes   -> one control-plane + two workers
+#   * spare disks   -> loop devices created inside the node (see prepare-disks.sh)
+#   * host mounts   -> /lib/modules and /run/udev, without which neither storage
+#                      system can prepare a device (explained inline)
+#
+# Two of these mounts come straight out of Rook's own CI configuration
+# (github.com/rook/rook/blob/release-1.20/tests/config/kind-config.yaml), which
+# runs the full Rook integration suite on kind — so this is a tested shape, not
+# a guess.
+#
+# The version is pinned on purpose. Storage behavior is version dependent
+# (CSI sidecars, VolumeAttributesClass, snapshot APIs) and a storage lab that
+# silently changes Kubernetes version under you is not reproducible.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: csilab
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.35.0
+    extraMounts:
+      - hostPath: /lib/modules
+        containerPath: /lib/modules
+        readOnly: true
+      - hostPath: /run/udev
+        containerPath: /run/udev
+        propagation: HostToContainer
+
+  - role: worker
+    image: kindest/node:v1.35.0
+    extraMounts:
+      # Ceph's CSI node plugin runs `modprobe rbd` inside a pod. A kind "node" is
+      # a container built from kindest/node whose /lib/modules is empty, because
+      # the kernel it uses belongs to the host. Without this mount the module
+      # loader fails with "Module rbd not found in directory /lib/modules/...".
+      - hostPath: /lib/modules
+        containerPath: /lib/modules
+        readOnly: true
+      # Rook mounts /run/udev from the *node* into every OSD pod, because
+      # ceph-volume identifies devices through udev's database. A kind node runs
+      # no udevd of its own, so that directory would be empty and Rook would log
+      # "No udev data could be retrieved" and silently skip the device. The host
+      # runs udevd, and it is the same kernel, so mounting the host's database
+      # read-through gives ceph-volume real answers about our loop devices.
+      - hostPath: /run/udev
+        containerPath: /run/udev
+        propagation: HostToContainer
+
+  - role: worker
+    image: kindest/node:v1.35.0
+    extraMounts:
+      - hostPath: /lib/modules
+        containerPath: /lib/modules
+        readOnly: true
+      - hostPath: /run/udev
+        containerPath: /run/udev
+        propagation: HostToContainer

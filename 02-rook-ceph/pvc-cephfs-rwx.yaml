@@ -1,0 +1,14 @@
+# ReadWriteMany: many pods, on many nodes, at the same time. RBD cannot do this
+# (a block device has one writer); CephFS can, because it is a filesystem.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cephfs-rwx
+  namespace: ceph-demo
+spec:
+  storageClassName: rook-cephfs
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 2Gi

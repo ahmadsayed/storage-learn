@@ -1,0 +1,24 @@
+# A PersistentVolume that no driver provisions: someone typed it in by hand.
+# "local" means "a path on one specific node" — the PV can only ever be used by
+# pods scheduled onto that node, which is what nodeAffinity below encodes.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: manual-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  local:
+    path: /mnt/csi-basics/manual-pv
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - csilab-worker

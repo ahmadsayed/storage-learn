@@ -1,0 +1,15 @@
+# A StorageClass for a real CSI driver. `provisioner` must equal the name in the
+# driver's CSIDriver object and the driver name it registers with kubelet.
+#
+# WaitForFirstConsumer: this driver stores data *on a node*, so the volume cannot
+# be created until a pod says which node it will run on. With Immediate binding a
+# node-local driver would provision onto an arbitrary node and the pod would
+# later mount an empty volume somewhere else.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: csi-hostpath-sc
+provisioner: hostpath.csi.k8s.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true

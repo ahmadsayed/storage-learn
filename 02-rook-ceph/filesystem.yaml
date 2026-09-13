@@ -1,0 +1,21 @@
+# CephFS: a real shared filesystem, which is how this cluster will offer
+# ReadWriteMany. Two pools (metadata + data) and one active MDS.
+apiVersion: ceph.rook.io/v1
+kind: CephFilesystem
+metadata:
+  name: myfs
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    replicated:
+      size: 2
+      requireSafeReplicaSize: true
+  dataPools:
+    - name: replicated
+      replicated:
+        size: 2
+        requireSafeReplicaSize: true
+  preserveFilesystemOnDelete: true
+  metadataServer:
+    activeCount: 1
+    activeStandby: false

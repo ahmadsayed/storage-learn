@@ -1,0 +1,14 @@
+# The plainest possible Longhorn claim: no parameters, no volumeAttributes.
+# Everything interesting happens behind the driver's socket.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lh-pvc
+  namespace: lh-demo
+spec:
+  storageClassName: longhorn
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi

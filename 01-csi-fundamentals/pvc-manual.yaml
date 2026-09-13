@@ -1,0 +1,14 @@
+# No volumeName: the PV controller has to *find* a PV that matches this request
+# (class, access mode, capacity). This is static provisioning.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: manual-pvc
+  namespace: csi-basics
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

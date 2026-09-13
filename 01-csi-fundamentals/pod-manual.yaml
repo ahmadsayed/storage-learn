@@ -1,0 +1,33 @@
+# The local PV lives on csilab-worker, so this pod must run there. A Scheduler
+# would do that for us through the PV's nodeAffinity; pinning it keeps the lesson
+# deterministic (there is no other workload in the cluster to compete with).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: manual-writer
+  namespace: csi-basics
+spec:
+  # nodeSelector, not nodeName: nodeName bypasses the scheduler, and a
+  # WaitForFirstConsumer PVC only gets provisioned after the *scheduler*
+  # records the chosen node in volume.kubernetes.io/selected-node.
+  nodeSelector:
+    kubernetes.io/hostname: csilab-worker
+  restartPolicy: Never
+  containers:
+    - name: writer
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          echo "written $(date -u +%FT%TZ) by $(hostname)" > /data/proof.txt
+          sync
+          echo "--- /data/proof.txt ---"
+          cat /data/proof.txt
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: manual-pvc

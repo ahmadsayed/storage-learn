@@ -1,0 +1,14 @@
+# The pool the RBD StorageClass points at. size 2 across two hosts means Ceph
+# keeps two copies of every object on two different nodes - this lab can lose a
+# whole worker and keep serving. size 3 (Rook's example default) is impossible
+# with two storage nodes and would block pool creation.
+apiVersion: ceph.rook.io/v1
+kind: CephBlockPool
+metadata:
+  name: replicapool
+  namespace: rook-ceph
+spec:
+  failureDomain: host
+  replicated:
+    size: 2
+    requireSafeReplicaSize: true

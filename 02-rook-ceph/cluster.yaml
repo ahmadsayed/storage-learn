@@ -1,0 +1,68 @@
+# A CephCluster sized for this lab, not a copy of Rook's example.
+#
+# Differences from deploy/examples/cluster.yaml, each for a reason:
+#   * mon count 1 / mgr count 1   - one control-plane-less lab node can host them
+#   * dashboard + monitoring off  - they are megabytes of RAM for no lesson value
+#   * crashCollector off          - needs object storage we are not building
+#   * storage: useAllNodes false  - THE important one; see the comment inline
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph
+spec:
+  cephVersion:
+    image: quay.io/ceph/ceph:v20.2.4
+    allowUnsupported: false
+  dataDirHostPath: /var/lib/rook
+  skipUpgradeChecks: false
+  continueUpgradeAfterChecksEvenIfNotHealthy: false
+  mon:
+    count: 1
+    allowMultiplePerNode: false
+  mgr:
+    count: 1
+  dashboard:
+    enabled: false
+  monitoring:
+    enabled: false
+  crashCollector:
+    disable: true
+  # Ceph's built-in default for a new pool is 3 replicas. With 2 OSDs on 2 hosts,
+  # every new pool would be permanently under-replicated and `ceph status` would
+  # report TOO_FEW_OSDS forever. Set the cluster-wide default to what this lab can
+  # actually satisfy; the pool below still asks for size 2 explicitly.
+  cephConfig:
+    global:
+      osd_pool_default_size: "2"
+  healthCheck:
+    # Ceph Tentacle (v20) warns that the cluster can still use the older AES-based
+    # cephx key type. Rook's own test cluster (deploy/examples/cluster-test.yaml)
+    # *sets* keyType: aes for nodes on kernels older than 7.0 and then mutes these
+    # warnings, because they say nothing about the data path. This lab runs on a
+    # 7.2.3 kernel and needs no aes setting: the warnings below are muted, not
+    # fixed - Lesson 02 shows them first, then explains why muting is acceptable.
+    muteHealthWarning:
+      AUTH_INSECURE_KEYS_ALLOWED:
+        policy: mute
+      AUTH_INSECURE_KEYS_CREATABLE:
+        policy: mute
+  storage:
+    # NOT useAllNodes/useAllDevices. lsblk inside every kind node lists every
+    # loop device in the kernel, so "use everything" would make both workers try
+    # to claim both disks - two OSDs on one backing file, and two OSDs on the
+    # same file from different nodes is silent corruption. Name the device on
+    # each node instead. On real hardware the equivalent is a deviceFilter like
+    # "^sd[b-e]$" plus useAllNodes: true.
+    useAllNodes: false
+    useAllDevices: false
+    nodes:
+      - name: "csilab-worker"
+        devices:
+          - name: "loop100"
+      - name: "csilab-worker2"
+        devices:
+          - name: "loop101"
+  disruptionManagement:
+    managePodBudgets: true
+    osdMaintenanceTimeout: 30

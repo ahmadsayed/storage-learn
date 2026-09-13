@@ -1,0 +1,14 @@
+# Dynamic provisioning with kind's built-in StorageClass. Note what is missing:
+# there is no CSI driver anywhere in this path.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: localpath-pvc
+  namespace: csi-basics
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

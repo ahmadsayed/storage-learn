@@ -1,0 +1,32 @@
+# Same shape as pod-manual.yaml, but now the volume comes from a CSI driver. The
+# pod spec does not mention the driver at all — that is the whole point of CSI:
+# only the StorageClass and the PV know who is behind the volume.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostpath-writer
+  namespace: csi-basics
+spec:
+  # nodeSelector, not nodeName: nodeName bypasses the scheduler, and a
+  # WaitForFirstConsumer PVC only gets provisioned after the *scheduler*
+  # records the chosen node in volume.kubernetes.io/selected-node.
+  nodeSelector:
+    kubernetes.io/hostname: csilab-worker
+  restartPolicy: Never
+  containers:
+    - name: writer
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          echo "written by the CSI hostpath driver" > /data/proof.txt
+          sync
+          cat /data/proof.txt
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: hostpath-pvc

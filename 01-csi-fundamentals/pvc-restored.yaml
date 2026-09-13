@@ -1,0 +1,18 @@
+# A PVC whose source is a snapshot, not empty space. This is the CSI "clone from
+# snapshot" path: the driver must implement CreateVolume with a snapshot source.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: restored-pvc
+  namespace: csi-basics
+spec:
+  storageClassName: csi-hostpath-sc
+  dataSource:
+    name: hostpath-snapshot
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

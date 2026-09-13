@@ -1,0 +1,10 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: rbd-snapshot
+  namespace: ceph-demo
+spec:
+  volumeSnapshotClassName: rook-ceph-rbd-snapclass
+  source:
+    # The claim lives in the ceph-demo namespace from Lesson 02.
+    persistentVolumeClaimName: rbd-pvc

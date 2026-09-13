@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 5 10 L 10 0 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <text x="500" y="30" text-anchor="middle" font-size="19" font-weight="bold" fill="#0f172a">One PVC, three realities</text>
+  <text x="500" y="52" text-anchor="middle" font-size="12.5" font-style="italic" fill="#64748b">the pod asks for storage; what answers decides whether a dead node is an incident or a data loss</text>
+
+  <!-- the only thing the application ever says -->
+  <rect x="60" y="76" width="330" height="74" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="2"/>
+  <text x="80" y="102" font-size="14" font-weight="bold" fill="#0f172a">Pod + PersistentVolumeClaim</text>
+  <text x="80" y="122" font-size="12" fill="#475569">accessModes: ReadWriteOnce</text>
+  <text x="80" y="139" font-size="12" fill="#475569">storageClassName: ???  &#8592; the only line that changes</text>
+
+  <!-- lanes -->
+  <!-- 1 local-path -->
+  <rect x="60" y="180" width="880" height="110" rx="10" fill="#fef2f2" stroke="#ef4444" stroke-width="2"/>
+  <text x="80" y="205" font-size="14" font-weight="bold" fill="#991b1b">standard &#8212; rancher.io/local-path</text>
+  <text x="80" y="225" font-size="12" fill="#991b1b">dynamic, but NOT CSI</text>
+  <rect x="80" y="238" width="240" height="38" rx="8" fill="#ffffff" stroke="#ef4444" stroke-width="1.5"/>
+  <text x="200" y="255" text-anchor="middle" font-size="11.5" fill="#991b1b">PV = hostPath + nodeAffinity</text>
+  <text x="200" y="270" text-anchor="middle" font-size="11.5" fill="#991b1b">no .spec.csi at all</text>
+  <line x1="330" y1="257" x2="378" y2="257" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="388" y="238" width="240" height="38" rx="8" fill="#ffffff" stroke="#ef4444" stroke-width="1.5"/>
+  <text x="508" y="255" text-anchor="middle" font-size="11.5" fill="#991b1b">bytes live in a directory</text>
+  <text x="508" y="270" text-anchor="middle" font-size="11.5" fill="#991b1b">on exactly one node</text>
+  <line x1="638" y1="257" x2="686" y2="257" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="700" y="248" font-size="12.5" font-weight="bold" fill="#991b1b">that node dies</text>
+  <text x="700" y="268" font-size="12.5" font-weight="bold" fill="#991b1b">&#8594; the data is gone</text>
+
+  <!-- 2 Rook Ceph -->
+  <rect x="60" y="302" width="880" height="128" rx="10" fill="#eef4ff" stroke="#3b82f6" stroke-width="2"/>
+  <text x="80" y="327" font-size="14" font-weight="bold" fill="#1e3a8a">rook-ceph-block &#8212; rook-ceph.rbd.csi.ceph.com</text>
+  <text x="80" y="347" font-size="12" fill="#1e3a8a">Ceph RBD, a block device over the network</text>
+  <rect x="80" y="360" width="240" height="55" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="200" y="378" text-anchor="middle" font-size="11.5" fill="#1e3a8a">ceph-csi controller (Deployment)</text>
+  <text x="200" y="394" text-anchor="middle" font-size="11.5" fill="#1e3a8a">+ node plugin (DaemonSet)</text>
+  <text x="200" y="409" text-anchor="middle" font-size="11.5" fill="#1e3a8a">krbd maps /dev/rbdN</text>
+  <line x1="330" y1="388" x2="378" y2="388" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="388" y="360" width="240" height="55" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="508" y="378" text-anchor="middle" font-size="11.5" fill="#1e3a8a">one RBD image in pool</text>
+  <text x="508" y="394" text-anchor="middle" font-size="11.5" fill="#1e3a8a">&#8220;replicapool&#8221;, cut into objects</text>
+  <text x="508" y="409" text-anchor="middle" font-size="11.5" fill="#1e3a8a">spread over the OSDs</text>
+  <line x1="638" y1="388" x2="686" y2="388" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="700" y="378" font-size="12.5" font-weight="bold" fill="#166534">2 copies, 2 nodes</text>
+  <text x="700" y="396" font-size="12.5" font-weight="bold" fill="#166534">(size: 2, failureDomain: host)</text>
+  <text x="700" y="414" font-size="11.5" fill="#1e3a8a">one node dies &#8594; still writable</text>
+
+  <!-- 3 Longhorn -->
+  <rect x="60" y="442" width="880" height="128" rx="10" fill="#f0fdf4" stroke="#22c55e" stroke-width="2"/>
+  <text x="80" y="467" font-size="14" font-weight="bold" fill="#166534">longhorn &#8212; driver.longhorn.io</text>
+  <text x="80" y="487" font-size="12" fill="#166534">the same idea, installed as one Helm chart</text>
+  <rect x="80" y="500" width="240" height="55" rx="8" fill="#ffffff" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="200" y="518" text-anchor="middle" font-size="11.5" fill="#166534">longhorn-manager (DaemonSet)</text>
+  <text x="200" y="534" text-anchor="middle" font-size="11.5" fill="#166534">+ CSI plugin, engine per volume</text>
+  <text x="200" y="549" text-anchor="middle" font-size="11.5" fill="#166534">iSCSI to /dev/longhorn/pvc-&#8230;</text>
+  <line x1="330" y1="528" x2="378" y2="528" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="388" y="500" width="240" height="55" rx="8" fill="#ffffff" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="508" y="518" text-anchor="middle" font-size="11.5" fill="#166534">a Longhorn volume</text>
+  <text x="508" y="534" text-anchor="middle" font-size="11.5" fill="#166534">= one replica per node,</text>
+  <text x="508" y="549" text-anchor="middle" font-size="11.5" fill="#166534">each a sparse file on a disk</text>
+  <line x1="638" y1="528" x2="686" y2="528" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="700" y="518" font-size="12.5" font-weight="bold" fill="#166534">3 replicas, 3 nodes</text>
+  <text x="700" y="536" font-size="11.5" fill="#166534">synchronous, rebuilt automatically</text>
+  <text x="700" y="554" font-size="11.5" fill="#166534">one node dies &#8594; degraded, then healthy</text>
+
+  <!-- CSI band -->
+  <rect x="60" y="588" width="880" height="40" rx="10" fill="#f5f3ff" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="80" y="613" font-size="12.5" font-weight="bold" fill="#4c1d95">CSI is the contract in the middle:</text>
+  <text x="288" y="613" font-size="12" fill="#5b21b6">CreateVolume &#183; ControllerPublishVolume &#183; NodeStageVolume &#183; NodePublishVolume</text>
+
+  <!-- the PVC's single decision -->
+  <line x1="225" y1="150" x2="225" y2="176" stroke="#64748b" stroke-width="2" marker-end="url(#down)"/>
+  <line x1="225" y1="290" x2="225" y2="298" stroke="#64748b" stroke-width="2" marker-end="url(#down)"/>
+  <line x1="225" y1="430" x2="225" y2="438" stroke="#64748b" stroke-width="2" marker-end="url(#down)"/>
+  <line x1="450" y1="150" x2="450" y2="176" stroke="#64748b" stroke-width="2" marker-end="url(#down)"/>
+  <line x1="675" y1="150" x2="675" y2="176" stroke="#64748b" stroke-width="2" marker-end="url(#down)"/>
+</svg>
