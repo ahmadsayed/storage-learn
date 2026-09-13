@@ -1,21 +1,19 @@
-# Longhorn 1.12.1 (chart version 1.12.1), sized for a three-node kind lab.
+# Longhorn 1.12.1 (chart version 1.12.1), sized for the lab's two VMs.
 #
-# Every non-default below is either a lab concession (RAM, tiny disks) or a
-# deliberate choice the lesson talks about. The defaults are what a production
-# cluster would keep.
+# Every non-default below is either a lab concession or a deliberate choice the
+# lesson talks about. On a production cluster you would keep most of the defaults.
 persistence:
   # Create the `longhorn` StorageClass and mark it the cluster default. It is
-  # expandable (allowVolumeExpansion: true) out of the box, unlike the local-path
-  # class this cluster started with in Lesson 01.
+  # expandable (allowVolumeExpansion: true) out of the box.
   defaultClass: true
-  # One replica per node. With three storage nodes that is three copies of every
-  # volume, which is the behaviour this lesson demonstrates.
-  defaultClassReplicaCount: 3
+  # Two nodes, two copies. This number decides how much redundancy a volume has,
+  # and Lesson 01 kills a node to show exactly what it buys.
+  defaultClassReplicaCount: 2
 
 csi:
-  # Chart default is 3 replicas of each CSI sidecar. One is enough for a lab and
-  # saves ~8 pods of RAM. NOTE: set these at install time - a later `helm upgrade`
-  # silently ignores them for already-created deployments.
+  # The chart defaults to 3 replicas of each CSI sidecar. One is plenty for a lab.
+  # Set them at install time: a later `helm upgrade` ignores these for deployments
+  # that already exist.
   attacherReplicaCount: 1
   provisionerReplicaCount: 1
   resizerReplicaCount: 1
@@ -23,20 +21,20 @@ csi:
 
 defaultSettings:
   # Only nodes labelled node.longhorn.io/create-default-disk=true become storage
-  # nodes. Without this, Longhorn creates a default disk on every node it ever
-  # sees, including ones added later by someone else.
+  # nodes, instead of Longhorn claiming a default disk on every node it ever sees.
   createDefaultDiskLabeledNodes: true
   defaultDataPath: /var/lib/longhorn
-  # Our disks are 5GiB. Longhorn refuses to schedule onto a disk with less than
-  # this percentage free, and the 25% default would make a 5GiB disk unschedulable
-  # after two small volumes.
+  # Replicas per volume for volumes created without an explicit count. Keep it in
+  # step with defaultClassReplicaCount above.
+  defaultReplicaCount: '{"v1":"2","v2":"2"}'
+  # Longhorn refuses to schedule onto a disk with less than this percentage free.
+  # 10% is comfortable on a 20GB VM disk; the 25% default wastes space in a lab.
   storageMinimalAvailablePercentage: 10
-  # Allow scheduling more nominal capacity than the disks physically hold, to show
-  # what thin provisioning means (and what it does not guarantee).
+  # Allow scheduling more nominal capacity than the disks physically hold, so the
+  # lesson can show what thin provisioning does and does not promise.
   storageOverProvisioningPercentage: 200
-  # Longhorn reserves a percentage of each node's CPU for its instance managers.
-  # The default of 12% is ~1.4 CPUs on this 12-CPU host, per node; 5% is plenty
-  # for a lab.
+  # Longhorn reserves a slice of each node's CPU for its instance managers. The 12%
+  # default is a lot on a 2-vCPU VM; 5% is plenty here.
   guaranteedInstanceManagerCPU: '{"v1":"5","v2":"5"}'
 
 longhornUI:

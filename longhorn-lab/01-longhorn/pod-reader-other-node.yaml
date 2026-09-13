@@ -8,7 +8,7 @@ metadata:
   namespace: lh-demo
 spec:
   nodeSelector:
-    kubernetes.io/hostname: lhslab-worker2
+    kubernetes.io/hostname: k3s-server
   restartPolicy: Never
   containers:
     - name: reader

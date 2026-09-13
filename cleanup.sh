@@ -2,13 +2,15 @@
 # cleanup.sh — remove both labs. Safe to re-run, and safe to run when only one of
 # them exists.
 #
-# The two labs are independent: the Ceph lab owns the cluster `csilab`, the
-# Longhorn lab owns `lhslab`. So this script *checks what is there* at every step
-# instead of assuming a state:
+# The two labs are independent, and they do not even share a substrate: the Ceph
+# lab owns the kind cluster `csilab`, the Longhorn lab owns two qemu VMs in
+# longhorn-lab/00-cluster-setup/. So this script *checks what is there* at every
+# step instead of assuming a state:
 #
 #   * a cluster that does not exist is skipped, not an error
 #   * a storage system that was never installed is skipped
 #   * a teardown step that is already done is skipped
+#   * the VMs are only touched if there are VMs
 #
 # Order matters, and in three places it is the difference between a clean re-run
 # and a machine that fights you:
@@ -20,9 +22,9 @@
 #      backing file no longer exists. Detach them BEFORE `kind delete`.
 #
 #   ./cleanup.sh                 # both labs
-#   ./cleanup.sh ceph            # only the Ceph lab
-#   ./cleanup.sh longhorn        # only the Longhorn lab
-#   KEEP_CLUSTERS=1 ./cleanup.sh # uninstall the storage systems, keep the nodes
+#   ./cleanup.sh ceph            # only the Ceph lab (the kind cluster)
+#   ./cleanup.sh longhorn        # only the Longhorn lab (the VMs)
+#   KEEP_CLUSTERS=1 ./cleanup.sh # uninstall the storage systems, keep the nodes/VMs
 #
 set -uo pipefail
 
@@ -30,9 +32,8 @@ WHICH="${1:-both}"
 KEEP_CLUSTERS="${KEEP_CLUSTERS:-0}"
 
 CEPH_CLUSTER="${CEPH_CLUSTER:-csilab}"
-LH_CLUSTER="${LH_CLUSTER:-lhslab}"
 CEPH_NODES=(csilab-control-plane csilab-worker csilab-worker2)
-LH_NODES=(lhslab-control-plane lhslab-worker lhslab-worker2)
+VM_DIR="$(cd "$(dirname "$0")" && pwd)/longhorn-lab/00-cluster-setup"
 NS_TO_PURGE=(ceph-demo csi-basics lh-demo storage-day2)
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -41,7 +42,6 @@ kind_has() { command -v kind >/dev/null 2>&1 && kind get clusters 2>/dev/null | 
 kubeconfig_for() {
   case "$1" in
     "$CEPH_CLUSTER") [ -f "$(dirname "$0")/.csi-lab.kubeconfig" ] && echo "$(cd "$(dirname "$0")" && pwd)/.csi-lab.kubeconfig" ;;
-    "$LH_CLUSTER")   [ -f "$(dirname "$0")/.lhslab.kubeconfig" ] && echo "$(cd "$(dirname "$0")" && pwd)/.lhslab.kubeconfig" ;;
   esac
 }
 # Run kubectl against one lab's cluster without disturbing the caller's config.
@@ -58,7 +58,7 @@ esac
 
 # ---------------------------------------------------------------------------
 step "1/6 Delete the workloads in whichever lab clusters exist"
-for cluster in $CEPH_CLUSTER $LH_CLUSTER; do
+for cluster in $CEPH_CLUSTER; do
   kind_has "$cluster" || { echo "  $cluster: not running, skipping"; continue; }
   reachable "$cluster" || { echo "  $cluster: not reachable with kubectl, skipping"; continue; }
   for ns in "${NS_TO_PURGE[@]}"; do
@@ -120,41 +120,34 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "3/6 Longhorn lab: uninstall Longhorn"
-if [ "$want_lh" = "1" ] && kind_has "$LH_CLUSTER" && reachable "$LH_CLUSTER"; then
-  if K "$LH_CLUSTER" get ns longhorn-system >/dev/null 2>&1; then
-    # Without this flag the uninstall fails, by design.
-    K "$LH_CLUSTER" -n longhorn-system patch settings.longhorn.io deleting-confirmation-flag \
-      --type=merge -p '{"value":"true"}' >/dev/null 2>&1 && echo "  deleting-confirmation-flag set"
-    if command -v helm >/dev/null 2>&1; then
-      cfg="$(kubeconfig_for "$LH_CLUSTER")"
-      if [ -n "$cfg" ]; then
-        helm --kubeconfig "$cfg" -n longhorn-system uninstall longhorn >/dev/null 2>&1 \
-          && echo "  helm release uninstalled"
-      else
-        helm -n longhorn-system uninstall longhorn >/dev/null 2>&1 && echo "  helm release uninstalled"
-      fi
+step "3/6 Longhorn lab: the VMs"
+VM_SH="$VM_DIR/vm.sh"
+if [ "$want_lh" = "1" ]; then
+  if [ -x "$VM_SH" ]; then
+    running=0
+    for role in server agent; do
+      [ -f "$VM_DIR/qemu-$role.pid" ] && kill -0 "$(cat "$VM_DIR/qemu-$role.pid")" 2>/dev/null && running=$((running+1))
+    done
+    disks=$(ls "$VM_DIR"/disk-*.qcow2 2>/dev/null | wc -l)
+    echo "  VMs running: $running   VM disks present: $disks"
+    if [ "$running" = "0" ] && [ "$disks" = "0" ]; then
+      echo "  nothing to clean: this lab's VMs do not exist"
+    elif [ "$KEEP_CLUSTERS" = "1" ]; then
+      # Keep the VMs but leave Longhorn itself intact: there is nothing outside the
+      # VMs to clean, so this is a no-op by design.
+      echo "  KEEP_CLUSTERS=1, leaving the VMs (and Longhorn inside them) alone"
+    else
+      "$VM_SH" destroy
     fi
-    echo "  waiting for longhorn-system to empty..."
-    for _ in $(seq 1 24); do
-      K "$LH_CLUSTER" get ns longhorn-system >/dev/null 2>&1 || break
-      sleep 5
-    done
-    K "$LH_CLUSTER" delete ns longhorn-system --wait=false >/dev/null 2>&1
-    for crd in $(K "$LH_CLUSTER" get crd -o name 2>/dev/null | grep 'longhorn\.io'); do
-      K "$LH_CLUSTER" delete "$crd" --ignore-not-found >/dev/null 2>&1
-    done
-    echo "  longhorn CRDs and namespace removed"
   else
-    echo "  longhorn-system not installed"
+    echo "  no vm.sh found at $VM_SH, skipping"
   fi
 else
-  echo "  Longhorn lab cluster not present, skipping"
+  echo "  Longhorn lab not selected, skipping"
 fi
 
-# ---------------------------------------------------------------------------
 step "4/6 Remove the shared lesson's driver and snapshot API (wherever they are)"
-for cluster in $CEPH_CLUSTER $LH_CLUSTER; do
+for cluster in $CEPH_CLUSTER; do
   kind_has "$cluster" || continue
   reachable "$cluster" || continue
   if K "$cluster" get crd volumesnapshots.snapshot.storage.k8s.io >/dev/null 2>&1 \
@@ -184,10 +177,11 @@ step "5/6 Undo the node-side lab hacks (inside the nodes, before they are delete
 # check is how an earlier version of this script detached the *other* lab's
 # devices while "cleaning" a cluster that did not exist.
 NODES_TO_CLEAN=()
+# Only kind nodes need this: the Longhorn lab's VMs are destroyed wholesale by
+# vm.sh, disks and all, so there is no host-side state of theirs to undo.
 [ "$want_ceph" = "1" ] && kind_has "$CEPH_CLUSTER" && NODES_TO_CLEAN+=("${CEPH_NODES[@]}")
-[ "$want_lh" = "1" ]   && kind_has "$LH_CLUSTER"   && NODES_TO_CLEAN+=("${LH_NODES[@]}")
 if [ "${#NODES_TO_CLEAN[@]}" -eq 0 ]; then
-  echo "  nothing to clean: no selected lab cluster is present"
+  echo "  nothing to clean: the Ceph lab's cluster is not present"
 fi
 for NODE in "${NODES_TO_CLEAN[@]}"; do
   if docker inspect "$NODE" >/dev/null 2>&1; then
@@ -205,28 +199,22 @@ echo "  (/dev/loop* device-node files may survive inside a node's private /dev;"
 echo "   they are meaningless without a backing device and vanish with the node.)"
 
 # ---------------------------------------------------------------------------
-step "6/6 Delete whichever lab clusters exist"
+step "6/6 Delete the Ceph lab's kind cluster"
 if [ "$KEEP_CLUSTERS" = "1" ]; then
-  echo "  KEEP_CLUSTERS=1, leaving the clusters running"
+  echo "  KEEP_CLUSTERS=1, leaving the cluster running"
+elif [ "$want_ceph" != "1" ]; then
+  echo "  Ceph lab not selected, skipping"
+elif kind_has "$CEPH_CLUSTER"; then
+  cfg="$(kubeconfig_for "$CEPH_CLUSTER")"
+  if [ -n "$cfg" ]; then
+    kind delete cluster --name "$CEPH_CLUSTER" --kubeconfig "$cfg" >/dev/null 2>&1 \
+      && echo "  $CEPH_CLUSTER deleted" || echo "  $CEPH_CLUSTER: kind reported an error while deleting"
+  else
+    kind delete cluster --name "$CEPH_CLUSTER" >/dev/null 2>&1 \
+      && echo "  $CEPH_CLUSTER deleted" || echo "  $CEPH_CLUSTER: kind reported an error while deleting"
+  fi
 else
-  for cluster in $CEPH_CLUSTER $LH_CLUSTER; do
-    case "$cluster" in
-      "$CEPH_CLUSTER") [ "$want_ceph" = "1" ] || continue ;;
-      "$LH_CLUSTER")   [ "$want_lh" = "1" ]   || continue ;;
-    esac
-    if kind_has "$cluster"; then
-      cfg="$(kubeconfig_for "$cluster")"
-      if [ -n "$cfg" ]; then
-        kind delete cluster --name "$cluster" --kubeconfig "$cfg" >/dev/null 2>&1 \
-          && echo "  $cluster deleted" || echo "  $cluster: kind reported an error while deleting"
-      else
-        kind delete cluster --name "$cluster" >/dev/null 2>&1 \
-          && echo "  $cluster deleted" || echo "  $cluster: kind reported an error while deleting"
-      fi
-    else
-      echo "  $cluster: not present"
-    fi
-  done
+  echo "  $CEPH_CLUSTER: not present"
 fi
 
 step "leftovers worth knowing about"
@@ -242,6 +230,8 @@ cat <<'EOF'
 
 Intentionally left in place
   * kernel modules loaded on the host: rbd, iscsi_tcp (gone at reboot)
-  * docker images: ceph, longhorn, the CSI sidecars (docker image prune removes them)
+  * docker images: ceph, the CSI sidecars (docker image prune removes them)
   * the host's /sys mount flags: a kind node remounts only its own namespaces
+  * longhorn-lab/00-cluster-setup/noble.img, the 600MB Ubuntu cloud image, which is
+    reused by the next './vm.sh up' (delete it by hand to reclaim the space)
 EOF

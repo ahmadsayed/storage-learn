@@ -7,3 +7,13 @@
 .csi-lab.kubeconfig
 .storage-lab/
 .lhslab.kubeconfig
+
+# the Longhorn lab's VMs: cloud image, guest disks, seeds, consoles, kubeconfig
+longhorn-lab/00-cluster-setup/noble.img
+longhorn-lab/00-cluster-setup/disk-*.qcow2
+longhorn-lab/00-cluster-setup/seed-*.iso
+longhorn-lab/00-cluster-setup/console-*.log
+longhorn-lab/00-cluster-setup/qemu-*.pid
+longhorn-lab/00-cluster-setup/labkey
+longhorn-lab/00-cluster-setup/labkey.pub
+longhorn-lab/00-cluster-setup/k3s.yaml

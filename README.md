@@ -10,15 +10,16 @@ Two storage systems, two labs, **two separate kind clusters**:
 
 | Lab | Cluster | What it answers |
 |-----|---------|-----------------|
-| [**Ceph lab**](ceph-lab/README.md) | `csilab` | What does a real distributed storage system look like on Kubernetes — and what does it cost to run? |
-| [**Longhorn lab**](longhorn-lab/README.md) | `lhslab` | How far does a single Helm chart get you, and where is the wall? |
+| [**Ceph lab**](ceph-lab/README.md) | kind, `csilab` | What does a real distributed storage system look like on Kubernetes — and what does it cost to run? |
+| [**Longhorn lab**](longhorn-lab/README.md) | **two VMs** running k3s | How far does a single Helm chart get you, with a real disk and a real `iscsid` underneath it? |
 
 They are not merged on purpose. Ceph wants an **empty block device** per storage
-node and Longhorn wants **a directory with space**; Ceph's data path is the kernel
-RBD client and Longhorn's is an iSCSI login through a userspace daemon. Running
-them on one cluster would blur the two failure models — which is exactly the
-thing worth seeing clearly. Each lab stands alone, and
-[`cleanup.sh`](cleanup.sh) removes whichever of them exists.
+node and Longhorn wants **a directory on a real filesystem**; Ceph's data path is the
+kernel RBD client, and Longhorn's is an iSCSI login through a userspace daemon whose
+engine also depends on how the storage manager sees the node. They even need
+different substrates: Ceph runs well on kind, Longhorn needs real nodes, so its lab
+uses VMs. Each lab stands alone, and [`cleanup.sh`](cleanup.sh) removes whichever of
+them exists.
 
 ## The shared lesson
 
@@ -42,8 +43,8 @@ get compared side by side. It was recorded on the Ceph lab's cluster.
 
 | # | Lesson | What you do |
 |---|--------|-------------|
-| **00** | [The Longhorn lab cluster](longhorn-lab/00-cluster-setup/README.md) | kind + a Longhorn data path per node, and an `iscsid` you have to start correctly |
-| **01** | [Longhorn](longhorn-lab/01-longhorn/README.md) | one Helm chart, disks, **three replicas on three nodes** — and the exact reason its V1 data engine cannot attach a volume on kind |
+| **00** | [The Longhorn lab cluster](longhorn-lab/00-cluster-setup/README.md) | two Ubuntu VMs running k3s, built by one script, with no host root needed |
+| **01** | [Longhorn](longhorn-lab/01-longhorn/README.md) | install, disks, a mounted volume, data that outlives the pod's node, a node killed and recovered — plus why this lab is not on kind |
 
 ![One PVC, three realities](diagrams/one-pvc-three-realities.svg)
 
@@ -56,8 +57,9 @@ get compared side by side. It was recorded on the Ceph lab's cluster.
 
 | Tool | Why |
 |------|-----|
-| **Docker** | every kind "node" is a container |
-| **kind** ≥ v0.31, **kubectl**, **git**, **helm** ≥ v3.13 (Longhorn lab) | the clusters and the storage systems |
+| **Docker** + **kind** ≥ v0.31 | the Ceph lab's cluster |
+| **qemu** + **`/dev/kvm`** + **`genisoimage`** | the Longhorn lab's two VMs (no host root needed) |
+| **kubectl**, **git**, **helm** ≥ v3.13 | driving the clusters and installing the storage systems |
 | **Internet access** | node images, plus ~1GB of Ceph or ~500MB of Longhorn images |
 | **~4GB of free RAM per lab** | do not run both clusters at once on a laptop; each storage system brings real daemons |
 | **A disposable machine** | Rook's OSD discovery gets access to device nodes (it will see your real disks). Lesson 01 of the Ceph lab shows that log line, and explains why each lab names its devices explicitly |
@@ -75,8 +77,8 @@ kind create cluster --config kind-config.yaml
 
 # Longhorn lab, when you want it (stop the Ceph cluster first on a small machine)
 cd longhorn-lab/00-cluster-setup
-kind create cluster --config kind-config.yaml
-./prepare-disks.sh
+./vm.sh up                # two VMs, k3s, kubeconfig — a few minutes
+export KUBECONFIG=$PWD/k3s.yaml
 ```
 
 > 💡 **Tip:** give each cluster its own kubeconfig — `kind create cluster
@@ -99,7 +101,7 @@ kind create cluster --config kind-config.yaml
 | Backups | S3/NFS via the CSI snapshotter | S3/NFS via `Backup` + a configured backupstore |
 | Minimum useful cluster | 3 nodes for `size: 3`; runs on 1 with `size: 1` | 3 nodes for 3 replicas; works on 1 |
 | Operational weight | hours to learn, days to run well | minutes to learn, less to run |
-| **On kind** | **block + RWX + expansion + snapshot/restore all verified** | **control plane verified; the V1 data plane cannot attach** |
+| **In this course** | **on kind: block + RWX + expansion + snapshot/restore all verified** | **on two VMs: attach, replicas, cross-node durability, node loss and rebuild all verified** |
 
 **Choose Longhorn** when storage should behave like the rest of your cluster: a
 Helm chart, a DaemonSet, CRs you can read, replicas you can count per node, and no
@@ -137,11 +139,12 @@ Three honest caveats, each developed in the lessons:
 
 - **The disks are loop devices.** They cannot fail like disks, and every
   throughput number you could measure is meaningless. The course publishes none.
-- **Longhorn does not officially support kind, and the Longhorn lab shows why.**
-  It installs and places replicas correctly here, but attaching a volume requires
-  `iscsid` to serve a client that Longhorn runs in a *different PID namespace*.
-  Lesson 01 proves it with the namespace IDs and the daemon's own error messages
-  rather than hand-waving.
+- **Longhorn does not officially support kind, so its lab does not use it.** The
+  short reason: Longhorn resolves its data path to the filesystem underneath it, and
+  inside a kind node that resolution lands on the host's btrfs with zero bytes free,
+  so no replica is ever scheduled. [Lesson 01](longhorn-lab/01-longhorn/README.md)
+  has the full investigation — along with two explanations this course got wrong
+  first, which is the more useful part to read.
 - **Your real disk is visible to Rook.** A privileged kind node exposes the host's
   device nodes, so OSD discovery inventories your actual NVMe. The Ceph lab names
   one device per node precisely so that cannot matter; `useAllDevices: true` on a

@@ -1,4 +1,4 @@
-# Lesson 01 — Longhorn: three replicas on three nodes, and the wall
+# Lesson 01 — Longhorn: replicated volumes that a pod can actually mount
 
 ## Glossary
 
@@ -13,50 +13,30 @@
 | **share-manager** | a pod that re-exports a volume over NFS so several nodes can mount it (RWX) |
 | **`Volume` / `Replica` / `Engine` CRs** | Longhorn's own resources (`lhv` / `lhr` / `lhe`); the UI and the CLI are views of these |
 | **robustness** | `healthy`, `degraded` (a replica is missing but I/O works), `faulted` (no engine, nothing serving) |
-| **SCM_CREDENTIALS** | how a unix-socket server learns *which process* is calling it — and the reason this lesson's failure happens |
 
-This lesson installs Longhorn, shows that it really does place **three replicas on
-three different nodes**, and then documents — with the daemon's own error messages
-and the namespace IDs behind them — why its V1 data engine cannot attach a volume
-inside a kind node. The provisioning half is a real demonstration; the second half
-is a diagnosis, and it is the more useful of the two.
+This lesson installs Longhorn on the lab's two VMs and holds it to the four
+promises that matter: a pod can mount a volume, the data outlives the pod's node,
+the cluster keeps serving when a node dies, and the missing copy comes back when
+that node returns. All four are demonstrated below with the machine's own output.
 
 ## Files
 
 - `values.yaml` — the install: pinned chart version plus every lab-sized override, each commented.
-- `namespace.yaml`, `pvc.yaml`, `pod-writer.yaml` — a 2Gi claim and a pod that writes to it.
-- `pod-reader-other-node.yaml` — the same claim from the *other* worker: the durability proof, had the attach worked.
+- `namespace.yaml`, `pvc.yaml`, `pod-writer.yaml` — a 2Gi claim, and a pod that writes into it on `k3s-agent`.
+- `pod-reader-other-node.yaml` — reads the same claim from `k3s-server`: the durability proof.
+- `pod-during-failure.yaml` — writes to the volume every 10 seconds, for the node-failure drill.
 
 ## Step 1 — Install Longhorn
 
 ```bash
-kubectl label node lhslab-control-plane lhslab-worker lhslab-worker2 \
-  node.longhorn.io/create-default-disk=true --overwrite
-
 helm repo add longhorn https://charts.longhorn.io && helm repo update
 helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
   --version 1.12.1 -f values.yaml
 ```
 
-Pinned to **Longhorn v1.12.1** (chart `1.12.1`), which documents Kubernetes ≥ v1.25,
-so v1.35 is inside the supported range. The labels matter because `values.yaml`
-sets `createDefaultDiskLabeledNodes: true`: only nodes you label become storage
-nodes, instead of Longhorn claiming a disk on every node it ever sees.
-
-Everything non-default in `values.yaml` is a lab concession or a decision worth
-understanding:
-
-| Setting | Lab value | Why |
-|---------|-----------|-----|
-| `persistence.defaultClassReplicaCount` | `3` | three storage nodes, so three copies — the point of this lesson |
-| `defaultSettings.createDefaultDiskLabeledNodes` | `true` | an explicit list of storage nodes beats "every node, forever" |
-| `defaultSettings.storageMinimalAvailablePercentage` | `10` | our disks are 5GiB; at the 25% default a disk can become unschedulable after two small volumes |
-| `defaultSettings.storageOverProvisioningPercentage` | `200` | lets the lab show thin provisioning: nominal capacity may exceed physical |
-| `defaultSettings.guaranteedInstanceManagerCPU` | `{"v1":"5","v2":"5"}` | the 12% default reserves ~1.4 CPUs *per node* of this 12-CPU host |
-| `csi.*ReplicaCount` | `1` each | four sidecars × 1 instead of × 3; ~8 pods of RAM saved. Set at install time — a later `helm upgrade` ignores them for existing deployments |
-| `longhornUI.replicas` | `1` | the chart default is 2; nobody is on call for a lab |
-
-The install settles at **18 pods, all running**:
+Pinned to **Longhorn v1.12.1** (chart `1.12.1`), which documents Kubernetes ≥ v1.25.
+The install settles at 14 pods, all running, and the shape of that list is
+Longhorn's architecture:
 
 | Pod | Count | What it is |
 |-----|-------|-----------|
@@ -68,6 +48,11 @@ The install settles at **18 pods, all running**:
 | `longhorn-driver-deployer`, `longhorn-ui` | 1 each | one-shot driver setup, and the UI |
 
 ```console
+$ kubectl -n longhorn-system get pods | wc -l
+14
+$ kubectl -n longhorn-system get pods | grep -c Running
+14
+
 $ kubectl get storageclass
 NAME                 PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE   ALLOWVOLUMEEXPANSION
 longhorn (default)   driver.longhorn.io      Delete          Immediate           true
@@ -76,228 +61,259 @@ standard (default)   rancher.io/local-path   Delete          WaitForFirstConsume
 ```
 
 > 💡 **Tip:** there are now **two default StorageClasses**. `persistence.defaultClass`
-> made `longhorn` a default, but kind's `standard` still is one too. Kubernetes
-> allows that, and a PVC with no `storageClassName` gets whichever default was
-> created *most recently* — a genuinely nasty surprise in a real cluster. Remove the
-> other one if you keep Longhorn as the default:
+> made `longhorn` a default, but k3s' `standard` still is one too. Kubernetes allows
+> that, and a PVC with no `storageClassName` gets whichever default was created *most
+> recently*. Remove the other if you keep Longhorn as the default:
 > `kubectl annotate sc standard storageclass.kubernetes.io/is-default-class-`
 
-## Step 2 — What Longhorn made of the nodes, and one thing it got wrong
+## Step 2 — What Longhorn made of the nodes
 
 ```bash
 kubectl -n longhorn-system get nodes.longhorn.io
-kubectl -n longhorn-system get nodes.longhorn.io lhslab-worker -o jsonpath='{.spec.disks}'
+kubectl -n longhorn-system get nodes.longhorn.io k3s-server -o jsonpath='{.spec.disks}'
 ```
 
 ```console
 $ kubectl -n longhorn-system get nodes.longhorn.io
-NAME                   READY   ALLOWSCHEDULING   SCHEDULABLE
-lhslab-control-plane   True    true              True
-lhslab-worker          True    true              True
-lhslab-worker2         True    true              True
+NAME         READY   ALLOWSCHEDULING   SCHEDULABLE
+k3s-agent    True    true              True
+k3s-server   True    true              True
 
-$ kubectl -n longhorn-system get nodes.longhorn.io lhslab-worker -o jsonpath='{.spec.disks}'
-{"default-disk-d555c32be30093d1":{"allowScheduling":true,"diskDriver":"","diskType":"filesystem",
- "evictionRequested":false,"path":"/var/lib/longhorn","storageReserved":112801087488,"tags":[]}}
+$ kubectl -n longhorn-system get nodes.longhorn.io k3s-server -o jsonpath='{.spec.disks}'
+{"default-disk-9b69791540b0aa9c":{"allowScheduling":true,"diskDriver":"","diskType":"filesystem",
+ "evictionRequested":false,"path":"/var/lib/longhorn","storageReserved":5904767385,"tags":[]}}
 ```
 
-The disk was **created for us** — with a generated name, `default-disk-<hash>` —
-because the node carries the label we set and `createDefaultDiskLabeledNodes` is
-true. Lesson 00 put ext4 on `/dev/loop221` at `/var/lib/longhorn`, and that mount
-was not optional: Longhorn supports only extent-based filesystems, and this
-workstation's root filesystem is btrfs.
-
-Now look at what Longhorn believes about that disk:
+The disk was created for us — a generated name, `default-disk-<hash>`, because the
+node carries the label from Lesson 00. And its accounting is *correct*:
 
 ```console
-$ kubectl -n longhorn-system get nodes.longhorn.io lhslab-worker \
-    -o jsonpath='{.status.diskStatus}' | grep -E 'filesystemType|diskName|storageMaximum|storageAvailable'
-"filesystemType": "btrfs",          <- not the ext4 we mounted
-"diskName": "/dev/nvme0",           <- the host's real disk, not /dev/loop221
-"storageMaximum": 0,
-"storageAvailable": 0,
+$ kubectl -n longhorn-system get nodes.longhorn.io k3s-server \
+    -o jsonpath='{.status.diskStatus}' | grep -E 'filesystemType|storageMaximum|storageAvailable|storageScheduled'
+"filesystemType": "ext2/ext3",          <- the ext4 root, correctly identified
+"storageAvailable": 13212057600,        <- 12.3 GiB free
+"storageMaximum":  19682557952,         <- 18.3 GiB total
+"storageScheduled": 2147483648,         <- 2 GiB of replicas already scheduled
 ```
 
-The reservation gives it away: `112801087488` bytes is **105GiB**, which is about
-30% of the host's 376GB filesystem — not 30% of a 5GiB device.
+`storageReserved` is 5.9GB, which is 30% of that 18.3GB — the chart default doing
+arithmetic on real numbers. Compare that with the same three commands against a kind
+node in the appendix at the end of this lesson, where every one of them reads zero
+and the filesystem is reported as btrfs, the host's.
 
-> ⚠️ **Warning, and an honest gap.** Longhorn's disk accounting here is reading the
-> filesystem *underneath* our loop mount — the host's btrfs NVMe — rather than the
-> ext4 created inside the node. The likely mechanism is that a mount made inside a
-> node container is not visible as a *mount entry* to a pod's mount table, so the
-> path resolves to its parent filesystem; the manager pod's own view is split, which
-> is why `df` inside it reports `/dev/loop221` while `findmnt` says "not a mount
-> point". I could not confirm that from Longhorn's source, so treat it as an
-> observation, not a finding.
->
-> Either way the practical consequence is concrete: **Longhorn's capacity numbers in
-> this lab cannot be trusted** (`storageMaximum: 0`), and in a real cluster a data
-> path that is a *bind mount* rather than its own filesystem is exactly the kind of
-> thing that produces this. A real node mounts a real disk there.
+> 🎓 **Insight:** Longhorn does not just want a directory with space. It resolves the
+> data path to the filesystem underneath it, and everything it can schedule follows
+> from that answer. This is why the lab is on VMs.
 
-## Step 3 — A volume, and three replicas on three different nodes
+## Step 3 — A volume a pod can actually mount
 
 ```bash
 kubectl apply -f namespace.yaml -f pvc.yaml -f pod-writer.yaml
-kubectl -n lh-demo get pvc lh-pvc
-kubectl -n longhorn-system get volumes.longhorn.io
-kubectl -n longhorn-system get replicas.longhorn.io \
-  -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeID,STATE:.status.currentState
+kubectl -n lh-demo get pvc
+kubectl -n lh-demo logs lh-writer
 ```
 
 ```console
-$ kubectl -n lh-demo get pvc lh-pvc
+$ kubectl -n lh-demo get pvc
 NAME     STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS
-lh-pvc   Bound    pvc-ea0cc7aa-0f2b-43b2-ae2b-e2b844307a56   2Gi        RWO            longhorn
+lh-pvc   Bound    pvc-41633c7b-3df6-4db6-87a4-ad3f18d9b1d8   2Gi        RWO            longhorn
 
-$ kubectl get pv pvc-ea0cc7aa-... -o custom-columns=DRIVER:.spec.csi.driver,HANDLE:.spec.csi.volumeHandle
-DRIVER               HANDLE
-driver.longhorn.io   pvc-ea0cc7aa-0f2b-43b2-ae2b-e2b844307a56
+$ kubectl -n lh-demo get pod lh-writer -o wide
+NAME        READY   STATUS      NODE
+lh-writer   0/1     Completed   k3s-agent
+
+$ kubectl -n lh-demo logs lh-writer
+written on lh-writer at 2026-09-13T08:27:35Z
+                          1.9G     28.0K      1.9G   0% /data
+```
+
+A real filesystem at `/data`, on a volume Longhorn built. The Longhorn side of the
+same moment:
+
+```console
+$ kubectl -n longhorn-system get volumes.longhorn.io
+NAME                                       DATA ENGINE   STATE      ROBUSTNESS   SCHEDULED   SIZE         NODE
+pvc-41633c7b-3df6-4db6-87a4-ad3f18d9b1d8   v1            attached   healthy                  2147483648   k3s-agent
 
 $ kubectl -n longhorn-system get replicas.longhorn.io -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeID,STATE:.status.currentState
-NAME                                                  NODE                   STATE
-pvc-ea0cc7aa-...-r-8701d06f                           lhslab-control-plane   stopped
-pvc-ea0cc7aa-...-r-a6b13bde                           lhslab-worker2         running
-pvc-ea0cc7aa-...-r-cb1b2949                           lhslab-worker          running
+NAME                                                  NODE         STATE
+pvc-41633c7b-...-r-16bebce6                           k3s-agent    running
+pvc-41633c7b-...-r-36a98a45                           k3s-server   running
 ```
 
-That is Longhorn's promise, verified: one claim became a volume with **three
-independent replicas, one per node, on three different disks** (`DISK` in the same
-output shows three distinct disk UUIDs). Note that the `volumeHandle` is simply the
-PVC's UID — unlike Ceph's `0001-0009-rook-ceph-<pool>-<uuid>`, Longhorn names volumes
-after their claim, which makes the link between Kubernetes and the storage layer much
-easier to follow.
+`STATE: attached`, `ROBUSTNESS: healthy`, and **two replicas, one on each node** —
+which is `defaultClassReplicaCount: 2` doing its job. The `volumeHandle` is simply
+the PVC's UID, so the link between Kubernetes and Longhorn is easy to follow.
 
-> 🎓 **Insight:** anti-affinity is not something you had to enable. Longhorn
-> defaults to `replicaSoftAntiAffinity: false`, so it refuses to put two healthy
-> replicas of one volume on one node. Three nodes is therefore the smallest
-> interesting Longhorn cluster — and the reason Lesson 00 had to untaint the
-> control-plane node.
+> 🎓 **Insight:** anti-affinity was not something you had to enable. Longhorn
+> defaults to `replicaSoftAntiAffinity: false`, meaning it refuses to put two healthy
+> replicas of one volume on one node. That is why two nodes is the smallest cluster
+> where a Longhorn volume has any redundancy at all.
 
-## Step 4 — The wall: the volume never attaches
+## Step 4 — The data outlives the pod's node
+
+The writer ran on `k3s-agent`. Delete it and run the reader on `k3s-server`:
+
+```bash
+kubectl -n lh-demo delete pod lh-writer
+kubectl apply -f pod-reader-other-node.yaml
+kubectl -n lh-demo logs lh-reader
+```
 
 ```console
-$ kubectl -n lh-demo get pod lh-writer
-NAME        READY   STATUS              RESTARTS   AGE
-lh-writer   0/1     ContainerCreating   0          3m
+$ kubectl -n lh-demo logs lh-reader
+reading on lh-reader:
+written on lh-writer at 2026-09-13T08:27:35Z
+
+$ kubectl -n lh-demo get pod lh-reader -o wide
+NAME        READY   STATUS      NODE
+lh-reader   0/1     Completed   k3s-server
+```
+
+While that happened, Longhorn detached the volume from one node and attached it to
+the other, ending `attached/healthy` again — a pod on node B read a file written by
+a pod on node A, with no copy step in between. This is the promise that a
+single-node `local-path` volume cannot keep, and it is worth doing by hand once.
+
+## Step 5 — Kill a node, and watch the volume keep serving
+
+`pod-during-failure.yaml` writes to the volume every 10 seconds from the node we are
+*not* going to kill, so the log records whether I/O survived the failure:
+
+```bash
+kubectl apply -f pod-during-failure.yaml          # writes on k3s-server
+./vm.sh ssh agent -- 'sudo poweroff'              # the node simply disappears
+```
+
+```console
+$ kubectl get nodes
+NAME         STATUS     ROLES           AGE     VERSION
+k3s-agent    NotReady   <none>          9m3s    v1.36.4+k3s1
+k3s-server   Ready      control-plane   10m     v1.36.4+k3s1
 
 $ kubectl -n longhorn-system get volumes.longhorn.io
-NAME                                       DATA ENGINE   STATE      ROBUSTNESS   SCHEDULED   SIZE
-pvc-ea0cc7aa-0f2b-43b2-ae2b-e2b844307a56   v1            attaching  unknown                  2147483648
+NAME                                       STATE      ROBUSTNESS   NODE
+pvc-41633c7b-3df6-4db6-87a4-ad3f18d9b1d8   attached   degraded     k3s-server
 
-$ kubectl -n lh-demo describe pod lh-writer | tail -2
-  Warning  FailedAttachVolume  AttachVolume.Attach failed ... volume ... is not ready for workloads:
-           waiting for the volume to fully detach. current state: attaching
+$ kubectl -n longhorn-system get replicas.longhorn.io -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeID,STATE:.status.currentState
+NAME                                                  NODE         STATE
+pvc-41633c7b-...-r-16bebce6                           k3s-agent    stopped
+pvc-41633c7b-...-r-36a98a45                           k3s-server   running
+
+$ kubectl -n lh-demo logs lh-continuous-writer | tail -4
+write 21 at 2026-09-13T08:31:49Z from lh-continuous-writer
+write 22 at 2026-09-13T08:31:59Z from lh-continuous-writer
+write 23 at 2026-09-13T08:32:09Z from lh-continuous-writer
+write 24 at 2026-09-13T08:32:19Z from lh-continuous-writer
 ```
 
-The volume cycles `attaching` → `detaching` → `faulted` for as long as you watch it.
-Nothing is wrong with the replicas: two are `running`, and Longhorn is not confused
-about the data. The **engine** never comes up, because it cannot log in to its own
-iSCSI target. From the instance-manager's log:
+Read those three outputs together, because together they are the entire argument for
+replication:
+
+| Output | What it means |
+|--------|---------------|
+| node `NotReady` | Kubernetes noticed, and stopped trusting the node |
+| `ROBUSTNESS: degraded` | Longhorn noticed too, and says so in one word — **not** `faulted` |
+| the replica on the dead node is `stopped`, the other `running` | one copy is gone; the volume is now one copy away from data loss |
+| the writer logged writes 17–24 straight through the outage | **the pod never noticed.** I/O continued on the surviving replica |
+
+> 🎓 **Insight:** `degraded` and `faulted` are the two words worth knowing. A
+> `degraded` volume is serving with fewer copies than configured — you have time to
+> act. A `faulted` volume has no working engine: that is the state you get with
+> `numberOfReplicas: 1` and the wrong node gone.
+
+## Step 6 — Bring the node back, and watch the copy return
+
+```bash
+./vm.sh start agent        # the same VM, the same disk — a reboot, not a reinstall
+kubectl apply -f pod-during-failure.yaml   # (or any pod) to keep the volume attached
+```
 
 ```console
-... nsenter [nsenter --mount=/host/proc/1226/ns/mnt --net=/host/proc/1226/ns/net iscsiadm
-    -m node -T iqn.2019-10.io.longhorn:pvc-ea0cc7aa-... -o update ...], stderr
-    iscsiadm: No records found: exit status 21
-
-... Failed to startup frontend ... stderr
-    iscsiadm: read error (0/2), daemon died?
-    iscsiadm: initiator reported error (18 - could not communicate to iscsid)
-
-... iscsiadm: can not connect to iSCSI daemon (111)!
+$ kubectl -n longhorn-system get volumes.longhorn.io    # polled every 15s
+  t=15s volume=detached/unknown    replicas: k3s-agent=stopped k3s-server=stopped
+  t=30s volume=attached/degraded   replicas: k3s-agent=running k3s-server=running
+  t=45s volume=attached/healthy    replicas: k3s-agent=running k3s-server=running
 ```
 
-## Step 5 — Why, exactly
+Both replicas come back and the volume reaches `healthy` within about 45 seconds of
+the node being Ready again. Nothing was copied by hand, and nothing was lost: the
+surviving replica held every byte the writer had written during the outage, and
+Longhorn used it to bring the returning copy back in sync.
 
-Longhorn's V1 engine exposes a volume over iSCSI, and it runs `iscsiadm` like this:
+> ⚠️ **Warning — one detail to get right when you run this.** Longhorn only reports
+> `robustness` while a volume is **attached**. If the pod holding the volume exits
+> during the drill, the volume detaches and `robustness` reads `unknown`, which looks
+> like a failure and is not. Keep a pod on the volume for the whole drill — that is
+> what `pod-during-failure.yaml` is for.
 
-```
-nsenter --mount=/host/proc/<iscsid pid>/ns/mnt --net=/host/proc/<iscsid pid>/ns/net iscsiadm ...
-```
+## Appendix — why this lab is not on kind
 
-It joins the node's **mount** and **network** namespaces — and note what is missing:
-`--pid`. So compare three views of the same machine:
+The first version of this lab ran on a three-node kind cluster, because that is what
+the Ceph lab uses. Everything on Longhorn's control plane worked there: install,
+disks, nodes, and **three replicas placed on three different nodes**. The volume never
+attached, and getting to the bottom of it took longer than it should have. The short
+version:
 
-```console
---- A) the NODE (docker exec lhslab-worker) ---
-  pid pid:[4026534032]     mnt mnt:[4026534029]     net net:[4026534034]
---- B) the instance-manager POD ---
-  pid pid:[4026535535]     mnt mnt:[4026535462]     net net:[4026536314]
---- C) the ENGINE's iscsiadm (nsenter into the node's mount+net) ---
-  pid pid:[4026535535]     mnt mnt:[4026534029]     net net:[4026534034]
-```
+| Symptom | What it looked like |
+|---------|--------------------|
+| The pod stuck in `ContainerCreating` | `AttachVolume.Attach failed … waiting for the volume to fully detach` |
+| The volume | `attaching` → `detaching` → `faulted`, forever |
+| The replicas | created one per node, then `stopped` — never `running` |
+| The engine's log | `Failed to startup frontend … could not communicate to iscsid` |
+| **The disk** | `"filesystemType": "btrfs"`, `"diskName": "/dev/nvme0"`, `"storageMaximum": 0`, `"storageAvailable": 0` |
 
-- **C matches A** on `mnt` and `net`: the node's namespaces really were joined.
-- **C matches B** on `pid`: the client asking for the login is still inside the
-  **pod's** PID namespace, while `iscsid` lives in the node's.
+That last row is the cause. Longhorn resolves the data path to the filesystem
+*underneath* it; inside a kind node `/var/lib/longhorn` is an ext4 loop mount whose
+mount entry is not visible to the manager's namespace, so the resolution landed on the
+host's btrfs filesystem — with zero bytes free. **A disk with no space schedules no
+replicas**, so no engine could start and the volume could only ever be `faulted`. On
+the VM cluster the same three commands report ext4, 18.3GB and 12.3GB available.
 
-`iscsid` authenticates its clients with `SCM_CREDENTIALS`, which carries the caller's
-PID — a PID that means nothing in the daemon's own namespace. It drops the
-connection, and the engine sees exactly that: `read error (0/2), daemon died?`.
+Two things this course got wrong on the way, recorded because the reasoning matters
+more than the answer:
 
-Three further observations make the wall solid rather than unlucky:
+- **It blamed the iSCSI path first.** Longhorn runs `iscsiadm` inside a live `iscsid`
+  process's namespaces (`nsenter --mount=… --net=…`, with no `--pid`), and the
+  namespace IDs really were different from the node's. That looked conclusive. It was
+  not: the same invocation was later shown to work — `iscsiadm -m session` answered
+  cleanly from inside the pod — once `iscsid` was running as a daemon that owned the
+  control socket instead of fighting systemd's socket unit for it. The namespaces were
+  a red herring.
+- **It then blamed the daemon's lifecycle.** In a kind node `iscsid` is socket
+  activated and exits when idle, so the PID Longhorn caches can be dead by its next
+  call. That does happen, and it produces a *different* error (`daemon died?`). It was
+  never the blocker either, because the volume failed identically while the daemon was
+  alive.
 
-| Observation | What it means |
-|-------------|---------------|
-| The same failure happens on this **dedicated** cluster, not only where Ceph also ran | it is not interference between two storage systems |
-| It happens both on the node whose daemon **is** alive (`live iscsid processes: 2` in Lesson 00's output) and on the node where it has exited (`0`) | the PID namespace mismatch is structural; the daemon's lifecycle only changes which error you get |
-| Lesson 00's per-node daemon counts differed (2, 0, 2) from one script and one image | the daemon is socket-activated and exits when idle, so the PID Longhorn caches can be dead by its next call — a second, aggravating failure |
-
-> ⚠️ **Warning:** there is no setting for this. `iscsid` cannot be told to skip the
-> peer check, and Longhorn does not expose the instance-manager's PID namespace. It
-> is why **Longhorn does not support kind**: kind is absent from its platform list
-> and from its CI, and a maintainer's answer in
-> [discussion #2702](https://github.com/longhorn/longhorn/discussions/2702) is
-> explicit that container-in-container environments are the problem. Historically
-> the blocker was that the node image shipped no `open-iscsi` at all; kind fixed that
-> in v0.20.0 and this lab's nodes have it — the remaining obstacle is the one above.
-
-### Contrast with the Ceph lab
-
-Ceph's data path needs **no userspace daemon**: the CSI node plugin asks the kernel to
-map an RBD image and gets `/dev/rbd0`. That is the whole reason the Ceph lab's volume
-attaches and this one does not, and it is a design difference worth carrying into any
-storage decision — every daemon in the data path is another thing that must agree
-about namespaces, permissions and lifecycle.
-
-## Step 6 — What still holds, and how to run Longhorn for real
-
-Everything on the control plane is real and verified here:
-
-- Longhorn provisioned the volume and **placed three replicas across three nodes**;
-  the anti-affinity rule, the disk CR, and the per-replica `spec.nodeID` /
-  `spec.diskID` are not simulated.
-- Longhorn's node CR reports node health honestly — `READY False` within a minute of
-  a node being stopped — and replicas on a lost node go `stopped`.
-- The `Replica` CRs answer "where are my three copies" with one `kubectl get`.
-
-| If you want to run Longhorn for real | What it takes |
-|--------------------------------------|---------------|
-| **A VM-backed cluster** (minikube with the kvm/docker driver, k3s in a VM, Rancher Desktop, or real nodes) | a real kernel and a real PID namespace per node: iSCSI behaves normally and none of Step 5 happens |
-| **Longhorn's V2 data engine** (NVMe-oF instead of iSCSI) | 2GiB of 2MiB hugepages per node, `vfio-pci`/`uio_pci_generic`, block-type disks, and a dedicated CPU per instance manager — possible on this host's kernel, out of scope for a three-node lab |
-| **kind** | the control plane works (this lesson); the V1 data plane cannot attach |
+None of which changes the practical conclusion, because Longhorn does not support
+kind: it is absent from the project's platform list and from its CI, and a maintainer
+has said plainly that container-in-container environments are the problem. **If you
+want Longhorn, give it real nodes** — VMs count, as this lab shows.
 
 ## Production note
 
-- **Three replicas cost three times the writes and three times the space.** Ceph
-  replicates 4MiB objects and rebuilds only what is missing; Longhorn rebuilds a whole
-  replica.
-- **`replicaSoftAntiAffinity: false` is a placement promise that needs nodes to keep
-  it.** With three storage nodes, one node down means the third replica cannot be
-  recreated anywhere until it returns.
+- **Two replicas is the minimum, not the target.** With two nodes, one node down
+  leaves exactly one copy and no ability to rebuild until it returns. Three or more
+  storage nodes is where Longhorn's anti-affinity gets useful.
+- **Every replica is a full copy.** Longhorn replicates whole volumes, so a 100GB
+  volume with 2 replicas uses 200GB plus snapshot space. Ceph replicates 4MiB objects
+  instead and rebuilds only what is missing.
 - **Set `node-down-pod-deletion-policy`** (`delete-deployment-pod` or
-  `delete-both-statefulset-and-deployment-pod`) if you want workloads on a dead node
-  to move. The default, `do-nothing`, leaves the pod stuck because its RWO volume is
-  still attached to the lost node.
-- **Snapshots are not backups.** Longhorn snapshots are local; a `Backup` needs an
-  NFS or S3 backupstore (`defaultBackupStore.backupTarget`), and a snapshot on the
-  same disk as its volume is not even a snapshot.
-- **The data path should be its own filesystem, not a bind mount.** This lab's
-  capacity accounting (Step 2) is the cautionary tale.
+  `delete-both-statefulset-and-deployment-pod`) if you want workloads stranded on a
+  dead node to move. The default, `do-nothing`, leaves them waiting because their RWO
+  volume is still attached to the node that is gone.
+- **Snapshots are not backups.** Longhorn snapshots live inside the volume's own
+  disks; `Backup` needs an NFS or S3 backupstore configured
+  (`defaultBackupStore.backupTarget`), and a snapshot on the same disk as its volume
+  is not even a snapshot.
+- **RWX goes through a `share-manager` pod** that re-exports the volume over NFS, so
+  every node that mounts it needs an NFS client. Lesson 00 installs one, which is why
+  RWX works here without extra steps.
 
 ## Next
 
-That is the Longhorn lab. The Ceph lab makes the same three promises —
-provisioning, replication, and a node dying — with a data path that has no daemon in
-it: [the Ceph lab](../../ceph-lab/README.md). To remove this one,
-`../../cleanup.sh longhorn`.
+That is the Longhorn lab. The Ceph lab makes the same promises with a different data
+path — no userspace daemon at all — and compares the two honestly:
+[the Ceph lab](../../ceph-lab/README.md). To remove this lab, `./vm.sh destroy` (or
+`../../cleanup.sh longhorn`, which does that for you).

@@ -1,181 +1,145 @@
-# Lesson 00 — The Longhorn lab cluster: three nodes, three fake disks, and iscsid
+# Lesson 00 — The Longhorn lab cluster: two real VMs running k3s
 
 ## Glossary
 
 | Term | What it means |
 |------|---------------|
-| **kind** | Kubernetes IN Docker — each "node" is a container, so a whole cluster runs on one machine |
-| **kindest/node** | the node image kind boots; here `v1.35.0`, a Debian 12 container running systemd, containerd and kubelet |
-| **loop device** | a file presented to the kernel as a block device (`/dev/loop221`); the standard way to fake a disk |
-| **data path** | the directory Longhorn keeps replicas in: `/var/lib/longhorn` by default, and it must be on ext4 or XFS |
-| **iscsid** | the iSCSI initiator daemon; Longhorn's V1 data engine logs in to an iSCSI target through it |
-| **socket activation** | systemd listens on a service's socket and starts the daemon when a client connects — which is why `iscsid` is not always running, and why that matters here |
-| **abstract socket** | a unix socket with no file on disk (`@ISCSIADM_ABSTRACT_NAMESPACE`); scoped to a network namespace, so only a client in the *same* netns can reach it |
+| **k3s** | a single-binary Kubernetes distribution; one server node is a whole control plane |
+| **cloud-init** | the standard way to configure a cloud image on first boot — users, packages, network, commands |
+| **KVM** | Linux's hardware virtualisation; `/dev/kvm` lets qemu run a VM at near-native speed |
+| **user-mode networking** | qemu's built-in NAT: internet for the guest, forwarded ports inward, no root and no bridge |
+| **multicast socket link** | qemu's `-netdev socket,mcast=…`: a virtual L2 segment between VMs, also without root |
+| **data path** | where Longhorn keeps replica files: `/var/lib/longhorn`, and it must be ext4 or XFS |
+| **iscsid** | the iSCSI initiator daemon; Longhorn's data engine drives it, and on a real node it is an ordinary systemd service |
 
-This lesson gives the Longhorn cluster its two prerequisites — a data path per node
-and a working `iscsid` — and shows you how to check both, because "install it and
-wait" is not enough for Longhorn on kind. The cluster is its own (`lhslab`); the
-Ceph lab's `csilab` is untouched by anything here.
+This lesson builds the Longhorn lab's cluster: **two Ubuntu VMs running k3s**,
+wired to each other and to the internet, with qemu running as your normal user.
 
-> 🧪 **Lab Hack** — real nodes have a disk and an init system. A kind node has a
-> container filesystem and systemd with most units disabled, so both prerequisites
-> are simulated. Every step says what the production equivalent is.
+> 🏭 **Why not kind?** Because Longhorn needs a real node, and the reason is
+> specific rather than superstitious: its data engine drives iSCSI through
+> `iscsid`, and its disk accounting resolves the data path to the filesystem
+> *underneath* that path. Inside a kind node the path is a nested loop mount that
+> the storage manager cannot see as a mount, so the same resolution lands on the
+> host's filesystem — btrfs, with zero bytes free — and no replica is ever
+> scheduled. [Lesson 01](01-longhorn/README.md) documents that investigation in
+> full, including the parts this course got wrong along the way.
 
 ## Files
 
-- `kind-config.yaml` — the cluster: 1 control-plane + 2 workers, pinned to `kindest/node:v1.35.0`.
-- `prepare-disks.sh` — idempotent: loads `iscsi_tcp`, starts iscsid and reports its state, gives each node an ext4 data path.
+- `vm.sh` — creates, starts, stops and destroys the VMs, and fetches the kubeconfig. Run it with no arguments to see its subcommands.
 
-## Step 1 — Create the cluster
+## Requirements
+
+| Tool | Why |
+|------|-----|
+| **qemu** (`qemu-system-x86_64`, `qemu-img`) and **`/dev/kvm`** | the VMs; KVM is what makes them fast enough to be pleasant |
+| **`genisoimage`** (or `mkisofs`) | building the cloud-init seed ISO |
+| **`kubectl`**, and `helm` for Lesson 01 | driving the cluster through the forwarded API port |
+| **~4GB RAM free**, ~25GB disk | two VMs at 1.75GB, plus a sparse 20GB disk each |
+| **Internet access** | the Ubuntu cloud image (~600MB, once) and the k3s install script |
+
+**No root on the host is required.** That is the point of the design: KVM is used
+as your user, internet comes from qemu's user-mode NAT, and the two VMs are joined
+by a multicast socket instead of a bridge or a tap device.
+
+## Step 1 — Build the cluster
 
 ```bash
-kind create cluster --config kind-config.yaml
+./vm.sh up
+```
+
+One command: it downloads the image if needed, generates an SSH key, writes a
+cloud-init seed for each VM, boots them, waits for k3s to install and join, and
+fetches the kubeconfig.
+
+```console
+$ ./vm.sh up
+== downloading the Ubuntu cloud image (~600MB, once)
+== server VM
+  server VM started (ssh 127.0.0.1:2222, api 127.0.0.1:6443)
+  waiting for cloud-init to install k3s (a few minutes)
+  kubeconfig: export KUBECONFIG=/…/longhorn-lab/00-cluster-setup/k3s.yaml
+== agent VM
+  agent VM started (ssh 127.0.0.1:2223, api 127.0.0.1:6444)
+== cluster ready
+NAME         STATUS   ROLES           AGE   VERSION        INTERNAL-IP     KERNEL-VERSION
+k3s-agent    Ready    <none>          13s   v1.36.4+k3s1   192.168.76.11   6.8.0-139-generic
+k3s-server   Ready    control-plane   79s   v1.36.4+k3s1   192.168.76.10   6.8.0-139-generic
+```
+
+```bash
+export KUBECONFIG=$PWD/k3s.yaml      # the k3s API, forwarded to 127.0.0.1:6443
+kubectl get nodes -o wide
+```
+
+## Step 2 — Check the two things Longhorn depends on
+
+```bash
+./vm.sh ssh server -- 'systemctl is-active iscsid; findmnt -no FSTYPE,SOURCE /'
 ```
 
 ```console
-$ kind create cluster --config kind-config.yaml
- • Ensuring node image (kindest/node:v1.35.0) 🖼  ...
- ✓ Ensuring node image (kindest/node:v1.35.0) 🖼
- • Preparing nodes 📦 📦 📦   ...
- ✓ Preparing nodes 📦 📦 📦
- • Writing configuration 📜  ...
- ✓ Writing configuration 📜
- • Starting control-plane 🕹️  ...
- ✓ Starting control-plane 🕹️
- • Installing CNI 🔌  ...
- ✓ Installing CNI 🔌
- • Installing StorageClass 💾  ...
- ✓ Installing StorageClass 💾
- • Joining worker nodes 🚜  ...
- ✓ Joining worker nodes 🚜
+$ ./vm.sh ssh server -- '…'
+active
+ext4   /dev/vda1
 ```
 
-> 💡 **Tip:** pass `--kubeconfig ~/.kube/lhslab.yaml` and export `KUBECONFIG` if you
-> also run the Ceph lab, so `kubectl delete` can never land on the wrong cluster.
+That is the whole prerequisite list, and on a real node it is boring:
 
-Two things to do before installing Longhorn. First, remove kind's control-plane
-taint — Longhorn counts **nodes** when it places replicas, and with two it can never
-place the third replica of a three-replica volume:
+| Requirement | On this VM | How the kind lab had to fake it |
+|-------------|------------|--------------------------------|
+| `iscsid` running | `active` — an ordinary systemd service | started by hand, and it fought systemd's socket unit for the control socket |
+| data path on ext4/XFS | the root filesystem *is* ext4 | an ext4 built on a loop device, because this workstation's root is btrfs |
+| a real disk | `/dev/vda1`, a 20GB virtio disk | a sparse file pretending to be a disk |
+| real namespaces | a real kernel; pods get their own namespaces normally | the "node" was itself a container |
+
+> 🎓 **Insight:** the data path row is the one that decided this lab's substrate.
+> Longhorn does not merely want space — it wants to know which filesystem it is
+> standing on, and a nested mount inside a container node does not answer that
+> question the way a real disk does.
+
+## Step 3 — Label the nodes as storage nodes
 
 ```bash
-kubectl taint node lhslab-control-plane node-role.kubernetes.io/control-plane-
+kubectl label node k3s-server k3s-agent node.longhorn.io/create-default-disk=true --overwrite
 ```
 
-> 🏭 **Production:** do not do that on a real cluster. Give the storage system
-> tolerations instead — Longhorn needs them on *both* its own components and the
-> system-managed pods: `longhornManager.tolerations` in the chart, plus the
-> `taint-toleration` setting. Removing the taint was the lab's choice because it is
-> one command and one less thing to misconfigure.
+`values.yaml` in the next lesson sets `createDefaultDiskLabeledNodes: true`, so
+only labelled nodes become storage nodes. Two nodes means two replicas per volume:
+enough for a real redundancy story and for the failure drill in Lesson 01, with no
+third node to spare for a control plane that also stores data.
 
-Second, prepare the nodes:
+## Lifecycle
 
-## Step 2 — Give each node a data path and an iscsid
+| Command | What it does |
+|---------|--------------|
+| `./vm.sh status` | which VMs are running, and the cluster's nodes |
+| `./vm.sh stop server` / `./vm.sh start server` | stop or start one VM; **the disk keeps its state** — this is a reboot, not a reinstall |
+| `./vm.sh down` | stop both VMs |
+| `./vm.sh ssh agent -- <cmd>` | run something inside a node |
+| `./vm.sh kubeconfig` | re-fetch the kubeconfig |
+| `./vm.sh destroy` | stop both VMs and delete their disks |
 
-```bash
-./prepare-disks.sh
-```
-
-```console
-$ ./prepare-disks.sh
-== lhslab-control-plane — kernel modules
-iscsi_tcp              28672  0
-
-== lhslab-control-plane — iSCSI daemon
-  iscsid.socket: active
-  listener on @ISCSIADM_ABSTRACT_NAMESPACE: 1
-  live iscsid processes: 2
-
-== lhslab-control-plane — Longhorn data path (/var/lib/longhorn on /dev/loop220, 5G)
-loop device attached
-mounted
-ext4   /dev/loop220 /var/lib/longhorn
-
-== lhslab-worker — iSCSI daemon
-  iscsid.socket: active
-  listener on @ISCSIADM_ABSTRACT_NAMESPACE: 1
-  live iscsid processes: 0          <- note this
-
-== lhslab-worker — Longhorn data path (/var/lib/longhorn on /dev/loop221, 5G)
-loop device attached
-mounted
-ext4   /dev/loop221 /var/lib/longhorn
-...
---- lhslab-worker
-ext4   /dev/loop221 /var/lib/longhorn
-  iscsid processes: 0
-```
-
-Four things are load-bearing in that output.
-
-| Step | Why it is here | Production equivalent |
-|------|----------------|-----------------------|
-| `modprobe iscsi_tcp` | Longhorn's engine needs the kernel iSCSI initiator. A kind node's `/lib/modules` is empty — `kind-config.yaml` mounts the host's read-only so the loader can resolve anything | loaded at boot |
-| start `iscsid.socket` | `iscsiadm` talks to the daemon over an **abstract** socket, which exists only inside one network namespace. The unit makes systemd own it, so a client can connect at all | `systemctl enable --now iscsid` |
-| watch the daemon's liveness | Longhorn does not call `iscsiadm` directly: it enters a **live iscsid process's** namespaces (`nsenter --mount=/proc/<iscsid>/ns/mnt --net=...`). In a kind node the daemon is socket-activated and **exits again after serving**, so this count is often `0` — and that is one of the two things that break Longhorn here | the daemon runs for the life of the node |
-| ext4 on `/dev/loop22N` | Longhorn rejects a data path that is not on an extent-based filesystem, and this workstation's root filesystem is btrfs, which Longhorn does not support. Each node gets its own ext4 | a data disk formatted ext4 or XFS, mounted at `/var/lib/longhorn` |
-
-> ⚠️ **Warning:** loop devices are kernel-global, so this lab uses 220+ while the
-> Ceph lab uses 100/101. Two nodes attaching the same loop index would be one
-> device with two owners.
-
-> 🎓 **Insight:** note that `live iscsid processes` is **0 on one node and 2 on the
-> others** — one script, one image, different outcomes, because the daemon is
-> socket-activated and exits again when it has served. Do not read a `2` as "the
-> problem is solved": Lesson 01 tests both states and shows the same failure,
-> because the obstacle is a namespace mismatch, not the daemon's liveness.
->
-> ⚠️ **One symptom you may meet in the journal, and should not over-read.** When
-> `iscsid` is started while systemd already owns the socket, it logs
-> `sendmsg: bug? ctrl_fd 5` and exits with status 255. It looks like the cause of
-> everything; it is not. The engine fails identically when that message never
-> appears. Treat it as a symptom of iscsid's control channel misbehaving inside a
-> container, which is worth knowing but was not chased to a root cause here.
-
-## Verify
-
-```bash
-for n in lhslab-control-plane lhslab-worker lhslab-worker2; do
-  echo "## $n"
-  docker exec $n sh -c 'findmnt -no FSTYPE,SOURCE,TARGET /var/lib/longhorn'
-  docker exec $n sh -c 'echo -n "  iscsid: "; pgrep -x iscsid | wc -l; echo -n "  socket listener: "; ss -xl | grep -c ISCSIADM'
-done
-```
-
-## Expected outcome
-
-```console
-## lhslab-control-plane
-ext4   /dev/loop220 /var/lib/longhorn
-  iscsid: 2
-  socket listener: 1
-## lhslab-worker
-ext4   /dev/loop221 /var/lib/longhorn
-  iscsid: 0
-  socket listener: 1
-## lhslab-worker2
-ext4   /dev/loop222 /var/lib/longhorn
-  iscsid: 2
-  socket listener: 1
-```
-
-Every node has ext4 at the data path and a listening socket. The daemon count is
-the part that varies, and Lesson 01 explains what it costs and why fixing it is not
-enough.
+> ⚠️ **Warning — a bug this lab shipped once.** The first version of `vm.sh`
+> recreated a VM's disk overlay on every start, so "restart the node" silently
+> became "reinstall the node", and the failure drill's recovery turned into a fresh
+> node with an empty data path. `start` now creates a disk only if there is none,
+> and it refuses to fail quietly: if qemu cannot start, it prints the guest's
+> console tail instead of leaving you waiting for a node that will never appear.
 
 ## Production note
 
-- **The data path must be a real filesystem, and Longhorn means it.** ext4 or XFS
-  only; btrfs is an open feature request, not a supported option. On a real node
-  this is a disk you partitioned once, not something a script does.
-- **`iscsid` is a hard dependency of the V1 data engine**, and every Longhorn
-  prerequisite check (`longhornctl check preflight`) looks for exactly these two
-  things: the package and the running daemon.
-- **The mount does not survive a node restart.** Neither a real node reboot nor a
-  kind container restart keeps it, and `prepare-disks.sh` exists to be re-run.
-- **This lab's cluster can run next to the Ceph lab's**, but not comfortably on a
-  laptop: each storage system brings real daemons. Stop one before starting the
-  other (`../../cleanup.sh ceph`, or `kind delete cluster --name csilab`).
+- **This is a lab, not a deployment.** Two VMs on one laptop share one disk and one
+  CPU: the redundancy is real at the Kubernetes and Longhorn layers and fictional at
+  the hardware layer.
+- **`--disable traefik --disable servicelb`** stops k3s from deploying an ingress
+  and a load balancer nobody asked for. `--flannel-iface intervm` pins the pod
+  network to the inter-VM link, which is what makes cross-node pod traffic work.
+- **The VMs reach the host only through forwarded ports**, because they sit behind
+  qemu's user-mode NAT. Fine for a lab; production has real networking.
+- **On a real cluster you do none of this.** You install k3s (or anything else) on
+  machines or cloud instances, and the two prerequisites above are simply true.
 
 ## Next
 
-Continue to [Lesson 01 — Longhorn](../01-longhorn/README.md).
+Continue to [Lesson 01 — Longhorn](01-longhorn/README.md).
