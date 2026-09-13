@@ -38,6 +38,11 @@ Pinned to **Longhorn v1.12.1** (chart `1.12.1`), which documents Kubernetes ≥ 
 The install settles at 14 pods, all running, and the shape of that list is
 Longhorn's architecture:
 
+> 💡 **Tip:** helm may print a handful of `Warning: unrecognized format "int64"`
+> lines while creating the CRDs. That is a cosmetic bug in the chart's CRD schemas
+> (a few `type: string` fields declare `format: int64`); the API server ignores
+> the unknown format and accepts the CRDs anyway. It is not a failure.
+
 | Pod | Count | What it is |
 |-----|-------|-----------|
 | `longhorn-manager-*` | 1 per node | the control plane |
