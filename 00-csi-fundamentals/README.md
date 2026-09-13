@@ -1,4 +1,4 @@
-# Lesson 01 — PV, PVC, StorageClass, and where CSI actually plugs in
+# Lesson 00 — CSI fundamentals: PV, PVC, StorageClass, and where CSI plugs in
 
 ## Glossary
 
@@ -353,4 +353,5 @@ are cluster-wide; `../cleanup.sh` removes them along with the cluster.
 
 ## Next
 
-Continue to [Lesson 02 — Rook Ceph: block and shared filesystem](../02-rook-ceph/README.md).
+Run the [Ceph lab](../ceph-lab/README.md) next: that is where this cluster gets a real CSI
+driver, and where `local-path` is replaced by storage that survives a node dying.

@@ -1,14 +1,17 @@
-# kind cluster for the CSI storage track.
+# kind cluster for the Ceph lab.
 #
-# This is the "hardware" of the course. Because both storage systems we install
-# (Rook Ceph and Longhorn) are meant to own raw disks and to survive a node
-# failing, the cluster needs three nodes and each worker needs something that
-# looks like a spare disk. kind gives us neither for free, so:
+# This lab is deliberately separate from the Longhorn lab: Ceph wants an empty
+# block device per storage node, Longhorn wants a directory with space, and the
+# two fail in completely different ways. Running them on one cluster would hide
+# that; each lab gets its own. `cleanup.sh` at the repository root removes
+# whichever of them exists.
 #
-#   * three nodes   -> one control-plane + two workers
-#   * spare disks   -> loop devices created inside the node (see prepare-disks.sh)
-#   * host mounts   -> /lib/modules and /run/udev, without which neither storage
-#                      system can prepare a device (explained inline)
+#   * three nodes -> Ceph keeps 2 copies of every object on 2 different hosts, so
+#                    a third node is left free for the monitor, the manager and
+#                    your pods
+#   * spare disks -> loop devices created inside the node (see prepare-disks.sh)
+#   * host mounts -> /lib/modules and /run/udev, without which Rook cannot
+#                    prepare a device (explained inline)
 #
 # Two of these mounts come straight out of Rook's own CI configuration
 # (github.com/rook/rook/blob/release-1.20/tests/config/kind-config.yaml), which

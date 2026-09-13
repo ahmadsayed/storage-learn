@@ -1,4 +1,4 @@
-# Lesson 04 — Day-2 operations, and choosing between them
+# Lesson 02 — Day-2 operations on Ceph
 
 ## Glossary
 
@@ -18,9 +18,12 @@
 | **`Unknown` pod** | a pod object whose node went away; the container is gone but the record lingers |
 
 This lesson does what you actually do to a storage system after it is running:
-grow a volume, snapshot it, restore it, and kill a node underneath it. Then it
-puts Ceph and Longhorn side by side and says which one to pick, including where
-this lab's evidence runs out.
+grow a volume, snapshot it, restore it, and kill a node underneath it. It also
+shows the one mistake this course made with its own scripts, because a storage lab
+that only ever demonstrates clean recovery teaches you to trust your recovery
+scripts more than you should.
+(The Ceph-vs-Longhorn comparison lives in the [course index](../../README.md), and
+the Longhorn lab is a separate cluster.)
 
 ## Files
 
@@ -137,13 +140,12 @@ rbd-restored   Bound    pvc-de1d57fa-539c-45ed-af38-ad0d1a148784   4Gi        RW
 
 > 🏭 **Production:** a snapshot lives *inside* the storage system, so it dies with
 > it. Rook/Ceph backups go to an S3 or NFS target through the Ceph CSI
-> snapshotter, and Longhorn needs a `backupTarget` configured before `Backup`
-> does anything. Snapshot locally for speed; back up off-cluster for survival.
+> snapshotter. Snapshot locally for speed; back up off-cluster for survival.
 
 ## Step 3 — Kill a storage node
 
-`csilab-worker` holds Ceph's `osd.1` and one replica of every Longhorn volume.
-Stopping it is the closest this lab gets to a real failure:
+`csilab-worker` holds Ceph's `osd.1`. Stopping it is the closest this lab gets to a
+real failure:
 
 ```bash
 docker stop csilab-worker
@@ -174,16 +176,6 @@ $ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
              44 active+undersized
              37 active+undersized+degraded
 
-$ kubectl -n longhorn-system get replicas.longhorn.io -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeID,STATE:.status.currentState
-pvc-5ad854d5-...-r-2cd5bde8   csilab-worker2         running
-pvc-5ad854d5-...-r-4d90ebaf   csilab-control-plane   running
-pvc-5ad854d5-...-r-a5484131   csilab-worker          stopped
-
-$ kubectl -n longhorn-system get nodes.longhorn.io
-NAME                   READY   ALLOWSCHEDULING   SCHEDULABLE
-csilab-control-plane   True    true              True
-csilab-worker          False   true              True
-csilab-worker2         True    true              True
 ```
 
 Read the four things this tells you:
@@ -193,7 +185,6 @@ Read the four things this tells you:
 | `mon: 1 daemons, quorum a` | the monitor was **not** on the dead node — with `mon: 1` that was luck, not design |
 | `1 osds down`, `50.000% degraded` | half the copies are gone, and Ceph says so with numbers rather than adjectives |
 | `volumes: 1/1 healthy` | the pool is still serving — `min_size: 1` means one surviving copy is enough for I/O |
-| Longhorn `stopped` / `READY False` | Longhorn tracks per-replica and per-node state, and does not pretend a lost replica is fine |
 
 > 🎓 **Insight:** `size: 2` with `min_size: 2` would have blocked writes the moment
 > one OSD died — a *configuration* decision that turns a degradation into an
@@ -234,10 +225,8 @@ kubectl wait --for=condition=Ready node/csilab-worker --timeout=300s
 ```
 
 Restarting a node container throws away everything that lived in its namespaces:
-the Longhorn data-path mount, the `iscsid` socket, the `/dev/rbd*` nodes, and a
-writable `/sys`. `prepare-disks.sh` is idempotent precisely so this works, and it
-does — the node returns, the fake disks come back, and Longhorn's node goes
-`READY True` again.
+the `/dev/rbd*` nodes and a writable `/sys`. `prepare-disks.sh` is idempotent precisely so this works, and it
+does — the node returns and the fake disks come back.
 
 The OSD does **not** come back:
 
@@ -325,54 +314,31 @@ it is the same process production runs when a disk is replaced.
 > was diagnosed (compare the device's signatures against a healthy peer's), how it
 > was fixed, and why the cluster survived it anyway.
 
-## Step 6 — Ceph or Longhorn?
+## Step 6 — Where this leaves you
 
-| | Rook Ceph (v1.20.7 / Tentacle v20.2.4) | Longhorn (v1.12.1) |
-|---|---|---|
-| Install | operator + CRDs + CSI operator + cluster CR; several GB of images | **one Helm chart** |
-| What it gives you | block (RBD), shared filesystem (CephFS), object (RGW) | block, plus NFS re-export for RWX |
-| Data path | kernel RBD client (`/dev/rbd0`), kernel CephFS | iSCSI login to an engine process, then `/dev/longhorn/<pvc>` |
-| Replication unit | objects in placement groups (4MiB), spread by CRUSH | whole-volume replicas, one per node |
-| Rebuild cost | only the missing objects move | a full replica is rebuilt |
-| Failure domains | host, zone, rack — configurable per pool | nodes only |
-| RWX | yes, CephFS, no extra component | yes, through a per-volume NFS `share-manager` pod |
-| Snapshots | CSI `VolumeSnapshot` (verified here) | native `Snapshot` CRs; CSI snapshots need explicit enablement |
-| Backups | S3/NFS via the CSI snapshotter | S3/NFS via `Backup` + a configured backupstore |
-| Minimum useful cluster | 3 nodes for `size: 3`; runs on 1 with `size: 1` | 3 nodes for 3 replicas; works on 1 |
-| Operational weight | hours to learn, days to run well | minutes to learn, less to run |
-| **This lab** | **block + RWX + expansion + snapshot/restore all verified** | **control plane verified; the V1 data plane cannot attach on kind** |
+The lab-verified summary is short: **`rook-ceph-block` gave a block device that a
+pod formatted as ext4, it grew online, it snapshotted and restored through the
+standard CSI API, and it kept serving reads while half its replicas were gone.**
+Those are the four things you will actually ask a storage system to do on a Tuesday.
 
-**Choose Longhorn** when the storage should behave like the rest of your cluster:
-a Helm chart, a DaemonSet, CRs you can read, replicas you can count per node, and
-no career in Ceph. It is the right default for a platform team that wants
-replicated storage without a storage team.
-
-**Choose Ceph** when you need shared filesystems and object storage from the same
-system, placement rules finer than "one copy per node", a data path with no
-userspace daemon in it, or an ecosystem (RBD mirroring, CephFS, RGW, erasure
-coding) that Longhorn simply does not have. You are buying capability with
-operational complexity.
-
-**Do not choose either** because "storage is hard" — a single-node `local-path`
-claim fails loudly and early; silent replication you do not understand fails
-during an incident. Pick the one whose failure modes you have seen.
+The head-to-head with Longhorn — including why Longhorn's V1 data engine cannot
+attach a volume on kind, and what that says about daemons in a data path — is in
+the [course index](../../README.md), next to the Longhorn lab that demonstrates it
+on its own cluster.
 
 ## Production note
 
-- **What this course verified, and what it did not.** Verified on this cluster:
-  Ceph provisioning of RBD, RWX from CephFS, online expansion, CSI snapshots and
-  restore, degradation and continued availability with one OSD down. Verified for
-  Longhorn: install, disks, node CRs, replica placement on three nodes, and
-  replica/node state when a node dies. **Not** verified anywhere: throughput,
-  latency, IOPS, real disk failure, multi-zone placement, and Longhorn's data
-  plane (see Lesson 03).
+- **What this lab verified, and what it did not.** Verified here: provisioning of
+  RBD volumes, RWX from CephFS, online expansion, CSI snapshot and restore,
+  degradation, and continued availability with one OSD down. **Not** verified here:
+  throughput, latency, IOPS, real disk failure, multi-zone placement, and anything
+  about Longhorn — that is a different cluster and a different lab.
 - **`mon: 1` is a lab setting.** Here it survived a node loss because the monitor
   happened to live elsewhere. In production run 3 or 5 monitors on separate hosts;
   losing quorum takes the whole cluster down, not just one pool.
 - **Replace `Unknown` pods deliberately.** After a node loss, pods on it sit in
-  `Unknown` until the node controller gives up on them; both Ceph and Longhorn
-  have settings for this (`node-down-pod-deletion-policy`,
-  `osdMaintenanceTimeout`, Rook's PDB-managed drains). Knowing which one is
+  `Unknown` until the node controller gives up on them. Ceph has settings for this
+  (`osdMaintenanceTimeout`, Rook's PDB-managed drains); knowing which one is
   configured is part of being on call for a storage system.
 - **Test the restore, not the backup.** A `VolumeSnapshot` that has never been
   restored into a running pod is a hypothesis.
@@ -385,4 +351,4 @@ That is the course. If you want to keep going, the natural next steps are the
 questions this lab deliberately left alone: what stops a pod from mounting a
 volume it should not (RBAC, admission, `fsGroup`), and how a storage system
 behaves under a *real* workload — a database with fsyncs, or a training job
-checkpointing every few minutes. `../cleanup.sh` tears this lab down.
+checkpointing every few minutes. `../../cleanup.sh` tears this lab down.

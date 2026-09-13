@@ -6,3 +6,4 @@
 # the upstream checkouts pulled down while recording the lessons
 .csi-lab.kubeconfig
 .storage-lab/
+.lhslab.kubeconfig

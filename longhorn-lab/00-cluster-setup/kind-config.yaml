@@ -1,0 +1,52 @@
+# kind cluster for the Longhorn lab.
+#
+# This lab is deliberately separate from the Ceph lab: Longhorn and Ceph want
+# different things from a node (a directory with space vs an empty block device),
+# they fail in different ways, and running both on one cluster teaches neither.
+# Each lab gets its own cluster, and `cleanup.sh` at the repository root removes
+# whichever of them exists.
+#
+#   * three nodes -> Longhorn places one replica per node, so three is the
+#                    smallest cluster in which "3 replicas" means anything
+#   * host mounts -> /lib/modules and /run/udev, explained inline
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lhslab
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.35.0
+    extraMounts:
+      - hostPath: /lib/modules
+        containerPath: /lib/modules
+        readOnly: true
+      - hostPath: /run/udev
+        containerPath: /run/udev
+        propagation: HostToContainer
+
+  - role: worker
+    image: kindest/node:v1.35.0
+    extraMounts:
+      # Longhorn's engine loads the iscsi_tcp module, and its data path carries
+      # the engine binaries it unpacks from its own image. A kind node's
+      # /lib/modules is empty — the kernel belongs to the host — so mount the
+      # host's read-only.
+      - hostPath: /lib/modules
+        containerPath: /lib/modules
+        readOnly: true
+      # Longhorn identifies disks partly through udev, and a kind node runs no
+      # udevd of its own; mounting the host's database read-through is what the
+      # Ceph lab does as well, for the same reason.
+      - hostPath: /run/udev
+        containerPath: /run/udev
+        propagation: HostToContainer
+
+  - role: worker
+    image: kindest/node:v1.35.0
+    extraMounts:
+      - hostPath: /lib/modules
+        containerPath: /lib/modules
+        readOnly: true
+      - hostPath: /run/udev
+        containerPath: /run/udev
+        propagation: HostToContainer

@@ -1,4 +1,4 @@
-# Lesson 02 — Rook Ceph: block storage and a shared filesystem
+# Lesson 01 — Rook Ceph: block storage and a shared filesystem
 
 ## Glossary
 
@@ -394,4 +394,5 @@ kubectl -n rook-ceph delete cephcluster rook-ceph
 
 ## Next
 
-Continue to [Lesson 03 — Longhorn: replicated volumes the easy way](../03-longhorn/README.md).
+Ceph is one of the two storage systems this course installs. The other one, with its
+own cluster and its own failure modes, is the [Longhorn lab](../../longhorn-lab/README.md).

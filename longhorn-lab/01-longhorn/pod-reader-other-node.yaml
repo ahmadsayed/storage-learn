@@ -1,23 +1,24 @@
+# Same PVC, deliberately scheduled onto the OTHER worker. If the file is here, the
+# data was never on the first pod's node - it is in the Longhorn volume, and
+# Longhorn re-attached that volume somewhere else.
 apiVersion: v1
 kind: Pod
 metadata:
-  name: lh-writer
+  name: lh-reader
   namespace: lh-demo
 spec:
   nodeSelector:
-    kubernetes.io/hostname: csilab-worker
+    kubernetes.io/hostname: lhslab-worker2
   restartPolicy: Never
   containers:
-    - name: writer
+    - name: reader
       image: busybox:1.36
       command:
         - sh
         - -c
         - |
-          echo "written $(date -u +%FT%TZ) by a pod on $(hostname)" > /data/proof.txt
-          sync
+          echo "reading on $(hostname):"
           cat /data/proof.txt
-          df -h /data
       volumeMounts:
         - name: data
           mountPath: /data

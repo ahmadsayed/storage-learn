@@ -1,127 +1,148 @@
-# CSI Storage in Kubernetes — a hands-on course
+# CSI Storage in Kubernetes — two hands-on labs
 
 Every pod that writes a file has already made a storage decision, whether or not
-anyone made it on purpose. This course is about that decision: what a
+anyone made it on purpose. These labs are about that decision: what a
 `PersistentVolumeClaim` really is, what a CSI driver does behind the socket, and
 what changes when the storage behind a claim is **replicated across nodes**
 instead of sitting in a directory on one machine.
 
-It installs both of the storage systems people actually run on Kubernetes —
-**Rook Ceph** and **Longhorn** — on one three-node kind cluster, and holds them to
-the same tests: a volume a pod formats as ext4, a volume two pods share, a
-snapshot both backends take through the *same* CSI API, and a node that dies
-underneath a running database.
+Two storage systems, two labs, **two separate kind clusters**:
 
-It is a standalone course: it creates its own kind cluster with its own fake
-disks (Lesson 00), installs everything itself, and assumes nothing about the rest
-of your machine except Docker, `kind`, `kubectl` and `helm`.
+| Lab | Cluster | What it answers |
+|-----|---------|-----------------|
+| [**Ceph lab**](ceph-lab/README.md) | `csilab` | What does a real distributed storage system look like on Kubernetes — and what does it cost to run? |
+| [**Longhorn lab**](longhorn-lab/README.md) | `lhslab` | How far does a single Helm chart get you, and where is the wall? |
 
-## The lessons (run them in order)
+They are not merged on purpose. Ceph wants an **empty block device** per storage
+node and Longhorn wants **a directory with space**; Ceph's data path is the kernel
+RBD client and Longhorn's is an iSCSI login through a userspace daemon. Running
+them on one cluster would blur the two failure models — which is exactly the
+thing worth seeing clearly. Each lab stands alone, and
+[`cleanup.sh`](cleanup.sh) removes whichever of them exists.
+
+## The shared lesson
 
 | # | Lesson | What you do |
 |---|--------|-------------|
-| **00** | [The lab cluster: three nodes and five fake disks](00-cluster-setup/README.md) | kind + loop devices + udev + iscsid: the "hardware" both storage systems need |
-| **01** | [PV, PVC, StorageClass, and where CSI plugs in](01-csi-fundamentals/README.md) | static vs dynamic provisioning, then the reference CSI driver, its socket, and a snapshot/restore |
-| **02** | [Rook Ceph: block and shared filesystem](02-rook-ceph/README.md) | operator, 2 OSDs on 2 nodes, `HEALTH_OK`, an RBD volume as `/dev/rbd0`, RWX from CephFS |
-| **03** | [Longhorn: replicated volumes, and the wall kind puts up](03-longhorn/README.md) | one Helm chart, three replicas on three nodes — and the iSCSI/namespace wall that stops the data plane on kind |
-| **04** | [Day-2 operations and Ceph vs Longhorn](04-day2-and-comparison/README.md) | online expansion, the same CSI snapshot on both, killing a node, and choosing between them |
+| **00** | [CSI fundamentals: PV, PVC, StorageClass, and where CSI plugs in](00-csi-fundamentals/README.md) | static vs dynamic provisioning, then the Kubernetes reference CSI driver, its socket, a `VolumeAttachment`, and a snapshot/restore |
+
+Run it on whichever lab cluster you have up — it needs a cluster with **no** CSI
+driver yet, and it is where `local-path` (dynamic, not CSI) and a real CSI driver
+get compared side by side. It was recorded on the Ceph lab's cluster.
+
+## The Ceph lab
+
+| # | Lesson | What you do |
+|---|--------|-------------|
+| **00** | [The Ceph lab cluster](ceph-lab/00-cluster-setup/README.md) | kind + two fake disks, udev, a writable `/sys`, `/dev/rbd*` |
+| **01** | [Rook Ceph: block storage and a shared filesystem](ceph-lab/01-rook-ceph/README.md) | Rook v1.20.7, 2 OSDs on 2 hosts, `HEALTH_OK`, a volume mounted as `/dev/rbd0`, RWX from CephFS |
+| **02** | [Day-2 operations](ceph-lab/02-day2/README.md) | online expansion, CSI snapshot and restore, killing a storage node, serving reads while degraded |
+
+## The Longhorn lab
+
+| # | Lesson | What you do |
+|---|--------|-------------|
+| **00** | [The Longhorn lab cluster](longhorn-lab/00-cluster-setup/README.md) | kind + a Longhorn data path per node, and an `iscsid` you have to start correctly |
+| **01** | [Longhorn](longhorn-lab/01-longhorn/README.md) | one Helm chart, disks, **three replicas on three nodes** — and the exact reason its V1 data engine cannot attach a volume on kind |
 
 ![One PVC, three realities](diagrams/one-pvc-three-realities.svg)
 
-> The diagram is the mental model for the whole course: the pod only ever names a
-> PVC. Whether that claim becomes a directory on one node, an RBD image replicated
-> across two OSDs, or three synchronous replicas of a sparse file is decided by
-> one line — `storageClassName` — and everything after that is the driver's
-> business.
+> The diagram is the mental model for both labs: the pod only ever names a PVC.
+> Whether that claim becomes a directory on one node, an RBD image replicated
+> across two OSDs, or three synchronous replicas of a sparse file is decided by one
+> line — `storageClassName` — and everything after that is the driver's business.
 
 ## Requirements
 
 | Tool | Why |
 |------|-----|
-| **Docker** + ~8GB of RAM free | each kind "node" is a container; Ceph and Longhorn together are real daemons |
-| **kind** ≥ v0.31, **kubectl** (verified on v1.36.4), **helm** ≥ v3.13, **git** | the cluster and the storage systems |
-| **Internet access** | node images, Ceph (~1GB), Longhorn, and the CSI sidecars |
-| **A disposable machine** | Lesson 00 gives Rook access to device nodes. It is fenced in by naming one device per node, but do not run this on a machine whose disks you cannot afford to lose |
+| **Docker** | every kind "node" is a container |
+| **kind** ≥ v0.31, **kubectl**, **git**, **helm** ≥ v3.13 (Longhorn lab) | the clusters and the storage systems |
+| **Internet access** | node images, plus ~1GB of Ceph or ~500MB of Longhorn images |
+| **~4GB of free RAM per lab** | do not run both clusters at once on a laptop; each storage system brings real daemons |
+| **A disposable machine** | Rook's OSD discovery gets access to device nodes (it will see your real disks). Lesson 01 of the Ceph lab shows that log line, and explains why each lab names its devices explicitly |
 
-No GPU is needed. Linux is assumed (the lab reaches into Docker and, in Lesson
-04, stops a node container); macOS and Windows users would need a Linux VM.
+No GPU is needed. Linux is assumed: both labs reach into Docker, and the Ceph lab
+stops a node container to simulate a failure.
 
-## How to run the course
+## How to run them
 
 ```bash
-cd 00-cluster-setup
+# Ceph lab
+cd ceph-lab/00-cluster-setup
+kind create cluster --config kind-config.yaml
+./prepare-disks.sh
+
+# Longhorn lab, when you want it (stop the Ceph cluster first on a small machine)
+cd longhorn-lab/00-cluster-setup
 kind create cluster --config kind-config.yaml
 ./prepare-disks.sh
 ```
 
-Then follow the lessons in order. Each one cleans up after itself
-(`kubectl delete namespace ...`), and `./cleanup.sh` at the end tears down
-everything, in the order that matters.
+> 💡 **Tip:** give each cluster its own kubeconfig — `kind create cluster
+> --kubeconfig ~/.kube/csilab.yaml`, then `export KUBECONFIG=~/.kube/csilab.yaml` —
+> so a later `kubectl delete` cannot land on the other lab, or on some unrelated
+> cluster you keep. That is how these lessons were recorded.
 
-> 💡 **Tip:** if you keep other kind clusters, add
-> `--kubeconfig ~/.kube/csilab.yaml` to `kind create` and export `KUBECONFIG` —
-> that is how this course was recorded, so a stray `kubectl delete` cannot land on
-> your other clusters.
+## Ceph or Longhorn?
 
-## What you end up with
+| | Ceph (v1.20.7 / Tentacle v20.2.4) | Longhorn (v1.12.1) |
+|---|---|---|
+| Install | operator + CRDs + CSI operator + cluster CR; several GB of images | **one Helm chart** |
+| What it gives you | block (RBD), shared filesystem (CephFS), object (RGW) | block, plus NFS re-export for RWX |
+| Data path | kernel RBD client (`/dev/rbd0`), kernel CephFS | iSCSI login to an engine process, then `/dev/longhorn/<pvc>` |
+| Replication unit | objects in placement groups (4MiB), spread by CRUSH | whole-volume replicas, one per node |
+| Rebuild cost | only the missing objects move | a full replica is rebuilt |
+| Failure domains | host, zone, rack — configurable per pool | nodes only |
+| RWX | yes, CephFS, no extra component | yes, through a per-volume NFS `share-manager` pod |
+| Snapshots | CSI `VolumeSnapshot` (verified in the Ceph lab) | native `Snapshot` CRs; CSI snapshots need explicit enablement |
+| Backups | S3/NFS via the CSI snapshotter | S3/NFS via `Backup` + a configured backupstore |
+| Minimum useful cluster | 3 nodes for `size: 3`; runs on 1 with `size: 1` | 3 nodes for 3 replicas; works on 1 |
+| Operational weight | hours to learn, days to run well | minutes to learn, less to run |
+| **On kind** | **block + RWX + expansion + snapshot/restore all verified** | **control plane verified; the V1 data plane cannot attach** |
 
-| Lesson | StorageClass | Provisioner | Backing it up | Survives a node dying |
-|--------|--------------|-------------|---------------|-----------------------|
-| 01 | `standard` | `rancher.io/local-path` | `hostPath` on one node | no |
-| 01 | `csi-hostpath-sc` | `hostpath.csi.k8s.io` | a directory on one node | no |
-| 02 | `rook-ceph-block` | `rook-ceph.rbd.csi.ceph.com` | RBD image, 2 copies on 2 OSDs | **yes, verified** — read a volume with half its replicas gone |
-| 02 | `rook-cephfs` | `rook-ceph.cephfs.csi.ceph.com` | CephFS, 2 copies, shared | yes (same pool) |
-| 03 | `longhorn` | `driver.longhorn.io` | 3 replicas placed on 3 nodes | not on kind — see below |
+**Choose Longhorn** when storage should behave like the rest of your cluster: a
+Helm chart, a DaemonSet, CRs you can read, replicas you can count per node, and no
+career in Ceph. It is the right default for a platform team that wants replicated
+storage without a storage team.
 
-The point of the table is the middle column: **`local-path` is dynamic and not
-CSI; `hostpath` is CSI and not replicated.** CSI is a protocol, not a promise
-about your data.
+**Choose Ceph** when you need shared filesystems and object storage from the same
+system, placement rules finer than "one copy per node", a data path with no
+userspace daemon in it, or an ecosystem (RBD mirroring, CephFS, RGW, erasure
+coding) that Longhorn does not have. You are buying capability with operational
+complexity.
 
-One row needs a caveat rather than a checkmark. Longhorn's control plane works
-perfectly here — it created the volume and placed **three replicas on three
-different nodes** — but its V1 data plane cannot attach a volume inside a kind
-node, because the engine logs into its own iSCSI target through a live `iscsid`
-process's namespaces and that cannot survive kind's nested PID namespace. Lesson
-03 has the full diagnosis and the two states that both fail. The honest summary:
-**on kind, Ceph's kernel-RBD data path works and Longhorn's userspace iSCSI path
-does not** — which is also why Longhorn does not list kind as a supported
-platform.
+**Do not choose either** because "storage is hard" — a single-node `local-path`
+claim fails loudly and early; silent replication you do not understand fails during
+an incident. Pick the one whose failure modes you have seen.
 
 ## Cleanup
 
 ```bash
-./cleanup.sh
+./cleanup.sh                 # both labs, checking what exists first
+./cleanup.sh ceph            # only the Ceph lab
+./cleanup.sh longhorn        # only the Longhorn lab
+KEEP_CLUSTERS=1 ./cleanup.sh # uninstall the storage systems, keep the nodes
 ```
 
-It is idempotent, and it detaches the loop devices **before** deleting the
-cluster — deleting a kind node while a loop device is attached to a file inside
-it leaves the host kernel holding a device whose backing file no longer exists.
+It is idempotent and skips anything that is not there, and it detaches the loop
+devices **before** deleting a cluster: deleting a kind node while a loop device is
+attached to a file inside it leaves the host kernel holding a device whose backing
+file no longer exists.
 
 ## Is this production?
 
-The drivers, the CRDs, the StorageClasses and the failure modes are the real
-ones — this is Rook v1.20.7 with Ceph Tentacle v20.2.4, and Longhorn v1.12.1 on
-Kubernetes v1.35.0. Four honest caveats, each developed in the lessons:
+The drivers, the CRDs, the StorageClasses and the failure modes are the real ones.
+Three honest caveats, each developed in the lessons:
 
 - **The disks are loop devices.** They cannot fail like disks, and every
   throughput number you could measure is meaningless. The course publishes none.
-- **Longhorn does not officially support kind, and this course found out why.**
-  No maintainer statement of support, and it is absent from their CI. It installs
-  and manages disks and replicas correctly here — because kind ≥ v0.20.0 ships
-  `open-iscsi` and `nfs-common` in the node image and shares the host kernel, and
-  because Lesson 00 gives each node an ext4 data path, which this workstation's
-  btrfs root would not otherwise provide — but attaching a volume requires
-  `iscsid` to live in the node's namespaces, which kind's container-in-container
-  design does not allow. Lesson 03 documents both failing states with the real
-  error messages instead of hiding them.
-- **The host's real disks are visible to the storage system.** A privileged kind
-  node gets the host's device nodes, so Rook's OSD discovery inventories your
-  actual NVMe (you can see it being skipped in Lesson 02's logs). Naming one
-  device per node is what keeps that from mattering; `useAllDevices: true` on a
+- **Longhorn does not officially support kind, and the Longhorn lab shows why.**
+  It installs and places replicas correctly here, but attaching a volume requires
+  `iscsid` to serve a client that Longhorn runs in a *different PID namespace*.
+  Lesson 01 proves it with the namespace IDs and the daemon's own error messages
+  rather than hand-waving.
+- **Your real disk is visible to Rook.** A privileged kind node exposes the host's
+  device nodes, so OSD discovery inventories your actual NVMe. The Ceph lab names
+  one device per node precisely so that cannot matter; `useAllDevices: true` on a
   machine whose disk looked empty would have wiped it.
-- **One node is not a failure domain.** Two kind workers give a real cross-node
-  story; they do not give you a rack, a zone, or a maintenance window.
-- **Muting is not fixing.** Where a warning is silenced (Ceph's cephx key-type
-  warnings), the lesson shows it firing first and explains why the mute is
-  acceptable — and `ceph status` keeps printing `(muted: ...)` so it never
-  disappears.
