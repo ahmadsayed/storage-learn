@@ -21,7 +21,7 @@ wired to each other and to the internet, with qemu running as your normal user.
 > *underneath* that path. Inside a kind node the path is a nested loop mount that
 > the storage manager cannot see as a mount, so the same resolution lands on the
 > host's filesystem — btrfs, with zero bytes free — and no replica is ever
-> scheduled. [Lesson 01](01-longhorn/README.md) documents that investigation in
+> scheduled. [Lesson 01](../01-longhorn/README.md) documents that investigation in
 > full, including the parts this course got wrong along the way.
 
 ## Files
@@ -41,6 +41,22 @@ wired to each other and to the internet, with qemu running as your normal user.
 **No root on the host is required.** That is the point of the design: KVM is used
 as your user, internet comes from qemu's user-mode NAT, and the two VMs are joined
 by a multicast socket instead of a bridge or a tap device.
+
+## Where these commands run
+
+Run this lesson's commands from **this directory** (`longhorn-lab/00-cluster-setup`),
+or call `vm.sh` by its path from the repository root as
+`./longhorn-lab/00-cluster-setup/vm.sh …`.
+
+There is no top-level `00-cluster-setup` directory — each lab has one, which is why
+the path always names the lab. `vm.sh` resolves its own directory, so it does not
+matter where you call it from:
+
+```console
+$ /…/storage-learn/longhorn-lab/00-cluster-setup/vm.sh status
+  server VM: running (pid 1935227)
+  agent VM: running (pid 1935248)
+```
 
 ## Step 1 — Build the cluster
 
@@ -142,4 +158,4 @@ third node to spare for a control plane that also stores data.
 
 ## Next
 
-Continue to [Lesson 01 — Longhorn](01-longhorn/README.md).
+Continue to [Lesson 01 — Longhorn](../01-longhorn/README.md).

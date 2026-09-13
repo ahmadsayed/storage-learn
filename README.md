@@ -21,6 +21,14 @@ different substrates: Ceph runs well on kind, Longhorn needs real nodes, so its 
 uses VMs. Each lab stands alone, and [`cleanup.sh`](cleanup.sh) removes whichever of
 them exists.
 
+**Start with the entry point of the lab you want** — `00-cluster-setup` lives inside
+each lab, never at the top of this repository:
+
+| Lab | First command, from here |
+|-----|--------------------------|
+| Ceph | `ceph-lab/00-cluster-setup/` → `kind create cluster --config kind-config.yaml` then `./prepare-disks.sh` |
+| Longhorn | `longhorn-lab/00-cluster-setup/` → `./vm.sh up` |
+
 ## The shared lesson
 
 | # | Lesson | What you do |
@@ -69,6 +77,9 @@ stops a node container to simulate a failure.
 
 ## How to run them
 
+Both blocks start from this repository's root; the second one assumes you are back
+there (each lab's `README.md` repeats its own steps on its own).
+
 ```bash
 # Ceph lab
 cd ceph-lab/00-cluster-setup
@@ -76,7 +87,7 @@ kind create cluster --config kind-config.yaml
 ./prepare-disks.sh
 
 # Longhorn lab, when you want it (stop the Ceph cluster first on a small machine)
-cd longhorn-lab/00-cluster-setup
+cd longhorn-lab/00-cluster-setup       # from the repository root, not from the Ceph lab
 ./vm.sh up                # two VMs, k3s, kubeconfig — a few minutes
 export KUBECONFIG=$PWD/k3s.yaml
 ```

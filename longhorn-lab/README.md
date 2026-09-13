@@ -45,8 +45,11 @@ than a bridge or tap device.
 
 ## How to run it
 
+There is no top-level `00-cluster-setup` directory: each lab has its own, so every
+command below names the lab as well. Run these from the repository root.
+
 ```bash
-cd 00-cluster-setup
+cd longhorn-lab/00-cluster-setup
 ./vm.sh up                       # image, VMs, k3s, kubeconfig — a few minutes
 export KUBECONFIG=$PWD/k3s.yaml
 
@@ -59,22 +62,29 @@ helm install longhorn longhorn/longhorn -n longhorn-system --create-namespace \
 Then work through Lesson 01. The failure drill stops a VM and starts it again; its
 disk keeps its state, so that is a reboot and not a reinstall.
 
+`vm.sh` resolves its own directory, so instead of the `cd` above you can call it as
+`./longhorn-lab/00-cluster-setup/vm.sh up` from the repository root, then set
+`KUBECONFIG=$PWD/longhorn-lab/00-cluster-setup/k3s.yaml`. (The `-f ../01-longhorn/`
+path in the `helm install` assumes you took the `cd`.)
+
 ## Do not run this next to the other labs on a small machine
 
 Two VMs plus the Ceph lab's kind cluster plus anything else of yours will not fit in
-15GB. Park them when they are not in use:
+15GB. Park them when they are not in use (from the repository root):
 
 ```bash
-./vm.sh down              # stop the VMs (disks keep their state)
-../../cleanup.sh ceph     # or stop the Ceph lab
+./longhorn-lab/00-cluster-setup/vm.sh down    # stop the VMs (disks keep their state)
+./cleanup.sh ceph                             # or stop the Ceph lab
 ```
 
 ## Cleanup
 
+From the repository root:
+
 ```bash
-./00-cluster-setup/vm.sh destroy     # stop the VMs and delete their disks
-./00-cluster-setup/vm.sh down        # or just stop them
-../../cleanup.sh longhorn            # both of the above, chosen automatically
+./cleanup.sh longhorn                            # stop the VMs and delete their disks
+./longhorn-lab/00-cluster-setup/vm.sh down       # or just stop them, disks intact
+./longhorn-lab/00-cluster-setup/vm.sh destroy    # stop them and delete the disks
 ```
 
 `cleanup.sh` checks what exists: it removes the Ceph lab's kind cluster only if that

@@ -34,17 +34,20 @@ No GPU is needed. Linux is assumed (the lab reaches into Docker).
 
 ## How to run it
 
+There is no top-level `00-cluster-setup` directory: each lab has its own, so every
+command below names the lab as well. Run these from the repository root.
+
 ```bash
-cd 00-cluster-setup
+cd ceph-lab/00-cluster-setup
 kind create cluster --config kind-config.yaml
 ./prepare-disks.sh
 ```
 
 Then work through the lessons in order. Each one cleans up after itself, and
-`../../cleanup.sh` tears the whole lab down — detaching the loop devices **before**
-deleting the cluster, because deleting a kind node while a loop device is attached
-to a file inside it leaves the host kernel holding a device whose backing file no
-longer exists.
+`./cleanup.sh ceph` from the repository root tears the whole lab down — detaching the
+loop devices **before** deleting the cluster, because deleting a kind node while a
+loop device is attached to a file inside it leaves the host kernel holding a device
+whose backing file no longer exists.
 
 ## What you end up with
 
