@@ -20,7 +20,7 @@ spec:
         - |
           echo "--- inside the pod ---"
           df -h /data | tail -1
-          echo "--- the file Lesson 02 wrote ---"
+          echo "--- the file Lesson 01 wrote ---"
           cat /data/proof.txt
           echo "expanded and still readable $(date -u +%FT%TZ)" >> /data/proof.txt
           sync

@@ -1,6 +1,7 @@
 # A VolumeSnapshotClass for Ceph RBD: the snapshot counterpart of
-# rook-ceph-block. Same API as the reference driver in Lesson 01, different
-# driver name and a Ceph secret to talk to the cluster.
+# rook-ceph-block. Same API as the reference driver in the shared
+# CSI-fundamentals lesson, different driver name and a Ceph secret to talk to
+# the cluster.
 apiVersion: snapshot.storage.k8s.io/v1
 kind: VolumeSnapshotClass
 metadata:

@@ -34,10 +34,11 @@ want different things from a node, and this lab only sets up what Ceph wants.
 kind create cluster --config kind-config.yaml
 ```
 
-> 💡 **Tip:** if you already keep other kind clusters — including this repository's
-> Longhorn lab — pass `--kubeconfig ~/.kube/csilab.yaml` and then
-> `export KUBECONFIG=~/.kube/csilab.yaml`, so a later `kubectl delete` can never
-> land on the wrong cluster. That is how this course was recorded.
+> 💡 **Tip:** if you already keep other kind clusters, pass
+> `--kubeconfig ../../.csi-lab.kubeconfig` (so the file lands at the repository
+> root) and then `export KUBECONFIG=…/.csi-lab.kubeconfig`, so a later
+> `kubectl delete` can never land on the wrong cluster. That is how this course
+> was recorded, and it is the file `cleanup.sh` looks for first.
 
 kind prints one line per phase and takes about a minute:
 
@@ -167,20 +168,20 @@ rbd                   159744  0
 brw-r--r-- 1 root root 251, 0 Sep 13 05:04 /dev/rbd0
 
 == csilab-worker — fake OSD disk (/dev/loop100, 8G)
-already attached
+already attached to the right backing file
 /dev/loop100         0      0         0  0 /var/lib/rook-osd/osd.img    0     512
 left /dev/loop100 signatures alone (WIPE_OSD_DEVICE=1 blanks it on purpose)
 
-== csilab-worker2 — fake OSD disk (/dev/loop101, 8G)
-already attached
+== csilab-worker2 — fake OSD disk (/dev/loop101, 8G)      # trimmed: the same four
+already attached to the right backing file                # sections run per node,
 /dev/loop101         0      0         0  0 /var/lib/rook-osd/osd.img    0     512
+...                                                       # then a == summary
 ```
 
 > ⚠️ **Warning:** loop devices are kernel-global. `/dev/loop100` attached in one
 > node is the *same* device another node would see if it attached that number, so
-> the script gives each node its own index (and the Longhorn lab uses 220+, so the
-> two clusters can run side by side). Two OSDs sharing one backing file would
-> corrupt data silently.
+> the script gives each node its own index. Two OSDs sharing one backing file
+> would corrupt data silently.
 
 That `signatures alone` line is not filler — it is a bug this course found the
 hard way:

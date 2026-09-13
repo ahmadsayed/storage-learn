@@ -27,13 +27,14 @@ the Longhorn lab is a separate cluster.)
 
 ## Files
 
-- `pod-rbd-verify.yaml` — runs after the expansion; prints the filesystem size the pod sees *and* the file Lesson 02 wrote.
+- `pod-rbd-verify.yaml` — runs after the expansion; prints the filesystem size the pod sees *and* the file Lesson 01 wrote.
 - `snapshotclass-rbd.yaml` — the `VolumeSnapshotClass` for Ceph RBD.
 - `volumesnapshot-rbd.yaml` — a snapshot of the 4Gi RBD volume.
 - `pvc-rbd-restored.yaml`, `pod-rbd-restored.yaml` — a new volume built from that snapshot, and a pod that reads it.
 
-All four live in the `ceph-demo` namespace from Lesson 02, because a
-`VolumeSnapshot` can only snapshot a claim in its own namespace.
+All except the cluster-scoped `snapshotclass-rbd.yaml` live in the `ceph-demo`
+namespace from Lesson 01, because a `VolumeSnapshot` can only snapshot a claim in
+its own namespace.
 
 ## Step 1 — Grow a volume, and learn why it takes two steps
 
@@ -74,7 +75,7 @@ kubectl -n ceph-demo logs rbd-verify
 $ kubectl -n ceph-demo logs rbd-verify
 --- inside the pod ---
 /dev/rbd0                 3.9G     28.0K      3.9G   0% /data
---- the file Lesson 02 wrote ---
+--- the file Lesson 01 wrote ---
 written 2026-09-13T05:04:28Z on rbd-writer
 expanded and still readable 2026-09-13T05:48:38Z
 
@@ -83,7 +84,7 @@ NAME      STATUS   VOLUME                                     CAPACITY   ACCESS 
 rbd-pvc   Bound    pvc-d273d48a-ff10-46d7-8121-64113eb17302   4Gi        RWO            rook-ceph-block
 ```
 
-The data written in Lesson 02 is still there, `df` shows the new size, and the
+The data written in Lesson 01 is still there, `df` shows the new size, and the
 claim now agrees with the device.
 
 > ⚠️ **Warning:** if you monitor "PVC capacity < requested capacity" you will page
@@ -93,8 +94,8 @@ claim now agrees with the device.
 
 ## Step 2 — Snapshot it, and restore into a new volume
 
-The API is the one from Lesson 01, unchanged; only the driver name and the Ceph
-credentials differ:
+The API is the one the shared [CSI-fundamentals lesson](../../00-csi-fundamentals/README.md)
+installed, unchanged; only the driver name and the Ceph credentials differ:
 
 ```bash
 kubectl apply -f snapshotclass-rbd.yaml -f volumesnapshot-rbd.yaml
@@ -113,8 +114,8 @@ rook-ceph.rbd.csi.ceph.com   true    4294967296
 ```
 
 That second listing is the whole argument for CSI in one screen: a **demo driver
-from Lesson 01 and a production Ceph cluster are producing the same
-`VolumeSnapshotContent` objects** through the same API. Nothing in your
+from the CSI-fundamentals lesson and a production Ceph cluster are producing the
+same `VolumeSnapshotContent` objects** through the same API. Nothing in your
 manifests, your RBAC or your backup tooling has to know which one it is talking
 to.
 
@@ -197,9 +198,13 @@ Read the four things this tells you:
 This is the question that decides whether replication was worth the cost:
 
 ```bash
-kubectl apply -f pod-rbd-restored.yaml
+kubectl -n ceph-demo delete pod rbd-restored-reader --ignore-not-found  # it completed in Step 2
+kubectl apply -f pod-rbd-restored.yaml   # pinned to csilab-worker2, the node that survived
 kubectl -n ceph-demo logs rbd-restored-reader
 ```
+
+(The delete matters: re-applying an unchanged manifest for a `restartPolicy: Never`
+pod is a no-op, so without it nothing mounts the volume again.)
 
 ```console
 $ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd stat

@@ -21,7 +21,7 @@
 #      still attached to a file inside it leaves the kernel holding a device whose
 #      backing file no longer exists. Detach them BEFORE `kind delete`.
 #
-# Step 3.5 is a caveat on point 3: the detach `docker exec`s into the node, and a
+# A caveat on point 3: the detach `docker exec`s into the node, and a
 # mount-namespace-level `losetup -D` does not always reach the host, so the run can
 # end with stale devices anyway. The final section detects them on both the old
 # (`lost`) and the new (`(deleted)`, empty device field) kernel reporting styles,
@@ -30,7 +30,8 @@
 #   ./cleanup.sh                 # both labs
 #   ./cleanup.sh ceph            # only the Ceph lab (the kind cluster)
 #   ./cleanup.sh longhorn        # only the Longhorn lab (the VMs)
-#   KEEP_CLUSTERS=1 ./cleanup.sh # uninstall the storage systems, keep the nodes/VMs
+#   KEEP_CLUSTERS=1 ./cleanup.sh # uninstall Rook Ceph but keep the nodes/VMs
+#                                # (Longhorn inside the VMs is left alone)
 #
 set -uo pipefail
 
@@ -40,7 +41,9 @@ KEEP_CLUSTERS="${KEEP_CLUSTERS:-0}"
 CEPH_CLUSTER="${CEPH_CLUSTER:-csilab}"
 CEPH_NODES=(csilab-control-plane csilab-worker csilab-worker2)
 VM_DIR="$(cd "$(dirname "$0")" && pwd)/longhorn-lab/00-cluster-setup"
-NS_TO_PURGE=(ceph-demo csi-basics lh-demo storage-day2)
+# Workload namespaces on the Ceph lab's cluster. The Longhorn lab's namespace
+# (lh-demo) lives inside the VMs and goes away with them in step 3.
+NS_TO_PURGE=(ceph-demo csi-basics)
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
@@ -63,7 +66,7 @@ case "$WHICH" in
 esac
 
 # ---------------------------------------------------------------------------
-step "1/6 Delete the workloads in whichever lab clusters exist"
+step "1/6 Delete the workloads in the Ceph lab cluster, if it exists"
 for cluster in $CEPH_CLUSTER; do
   kind_has "$cluster" || { echo "  $cluster: not running, skipping"; continue; }
   reachable "$cluster" || { echo "  $cluster: not reachable with kubectl, skipping"; continue; }
@@ -74,7 +77,7 @@ for cluster in $CEPH_CLUSTER; do
         || echo "  $cluster: namespace $ns did not finish deleting"
     fi
   done
-  for sc in rook-ceph-block rook-cephfs csi-hostpath-sc longhorn longhorn-static; do
+  for sc in rook-ceph-block rook-cephfs csi-hostpath-sc; do
     if K "$cluster" get storageclass "$sc" >/dev/null 2>&1; then
       K "$cluster" delete storageclass "$sc" >/dev/null 2>&1 && echo "  $cluster: storageclass $sc removed"
     fi
@@ -227,10 +230,10 @@ step "leftovers worth knowing about"
 # A loop device whose backing file was deleted inside a node that no longer exists
 # stays attached in the HOST kernel. Detecting that took a fix: the classic marker
 # is the status field reading `lost` — `/dev/loop0: [2049]:12345 (/path (deleted))`
-# — but on newer kernels (6.15 here) the same condition prints an EMPTY device
+# — but on newer kernels (7.2.3 here) the same condition prints an EMPTY device
 # field instead, with no status word at all:
 #
-#   /dev/loop220: []: (/lib/longhorn-disk.img (deleted))
+#   /dev/loop220: []: (/var/lib/longhorn-disk.img (deleted))
 #
 # Matching only on `lost` therefore finds nothing on a modern host, which is how
 # this script used to print "no stale loop devices" while holding five.
@@ -262,7 +265,7 @@ fi
 cat <<'EOF'
 
 Intentionally left in place
-  * kernel modules loaded on the host: rbd, iscsi_tcp (gone at reboot)
+  * kernel modules loaded on the host: rbd (gone at reboot)
   * docker images: ceph, the CSI sidecars (docker image prune removes them)
   * the host's /sys mount flags: a kind node remounts only its own namespaces
   * longhorn-lab/00-cluster-setup/noble.img, the 600MB Ubuntu cloud image, which is

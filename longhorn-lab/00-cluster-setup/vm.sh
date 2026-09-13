@@ -16,6 +16,8 @@
 #   ./vm.sh status      # what is running
 #   ./vm.sh ssh server|agent -- <command>
 #   ./vm.sh kubeconfig  # (re)fetch k3s kubeconfig into ./k3s.yaml
+#   ./vm.sh start server|agent   # start one VM (its disk keeps its state)
+#   ./vm.sh stop [server|agent]  # stop one VM, or both with no argument
 #   ./vm.sh down        # stop both VMs (their disks keep their state)
 #   ./vm.sh destroy     # stop them and delete the disks
 #
@@ -193,7 +195,10 @@ start)
   ;;
 
 stop)
-  for role in server agent; do
+  # One VM if a role is named, both otherwise — mirroring 'start'.
+  roles=("${2:-}")
+  [ -n "${roles[0]}" ] || roles=(server agent)
+  for role in "${roles[@]}"; do
     if [ -f "$DIR/qemu-$role.pid" ]; then
       kill "$(cat "$DIR/qemu-$role.pid")" 2>/dev/null && echo "  stopped $role VM"
       rm -f "$DIR/qemu-$role.pid"
@@ -222,5 +227,5 @@ destroy)
   echo "  delete $BASE if you want that gone too)"
   ;;
 
-*) sed -n '2,24p' "$0"; exit 2 ;;
+*) sed -n '2,23p' "$0"; exit 2 ;;
 esac

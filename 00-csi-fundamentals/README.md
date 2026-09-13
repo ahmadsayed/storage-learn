@@ -149,8 +149,9 @@ closes.
 
 Snapshots are **not** part of the core API. The CRDs and a controller come from
 [external-snapshotter](https://github.com/kubernetes-csi/external-snapshotter),
-pinned here to `v8.6.0` — the same version the reference driver's snapshotter
-sidecar and Rook v1.20 ship, so nothing is talking past anything else:
+pinned here to `v8.6.0` — the version the reference driver's snapshotter sidecar
+ships. Rook v1.20's sidecar is one patch behind (`v8.5.0`), which the v8.6.0 CRDs
+tolerate, but on a production cluster match the driver's sidecar instead:
 
 ```bash
 SS=https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.6.0
@@ -317,7 +318,7 @@ restored-pvc        Bound     pvc-1e30...  1Gi       RWO            csi-hostpath
 | Snapshots | n/a | not supported | works (Step 7) |
 | Survives the pod moving nodes | no | no | no — *this* driver is node-local too |
 
-> 🎓 **Insight:** that last row is the one to carry into Lesson 02. Being CSI does
+> 🎓 **Insight:** that last row is the one to carry into the two labs. Being CSI does
 > not make storage replicated or highly available. CSI is a *protocol*: it says
 > how kubelet and a driver talk, not what the driver does behind the socket. The
 > hostpath driver is CSI and loses your data when a node dies; `local-path` is not
@@ -337,8 +338,10 @@ restored-pvc        Bound     pvc-1e30...  1Gi       RWO            csi-hostpath
   for anything you are unsure about.
 - **Access modes are the driver's promise, not a filesystem guarantee.**
   `ReadWriteOnce` here means "one node", not "one pod", and whether
-  `ReadWriteMany` is possible at all depends on the driver — Lesson 02 gets RWX
-  from CephFS, and Lesson 03 from Longhorn's NFS share-manager.
+  `ReadWriteMany` is possible at all depends on the driver — the Ceph lab's
+  [Lesson 01](../ceph-lab/01-rook-ceph/README.md) gets RWX from CephFS, and the
+  Longhorn lab's [Lesson 01](../longhorn-lab/01-longhorn/README.md) explains its
+  NFS share-manager.
 
 ## Cleanup
 

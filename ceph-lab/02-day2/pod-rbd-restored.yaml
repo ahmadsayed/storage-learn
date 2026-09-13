@@ -4,8 +4,10 @@ metadata:
   name: rbd-restored-reader
   namespace: ceph-demo
 spec:
+  # Pinned to csilab-worker2: the node Lesson 02's failure drill does NOT kill,
+  # so re-creating this pod after the kill proves the degraded volume still mounts.
   nodeSelector:
-    kubernetes.io/hostname: csilab-worker
+    kubernetes.io/hostname: csilab-worker2
   restartPolicy: Never
   containers:
     - name: reader

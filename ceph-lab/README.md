@@ -8,7 +8,7 @@ This lab has **its own kind cluster** (`csilab`), separate from the Longhorn lab
 That is deliberate: Ceph wants an empty block device per storage node, Longhorn
 wants a directory with space, and the two fail in completely different ways.
 Running them on one cluster would hide exactly what makes each of them worth
-learning. `../../cleanup.sh` removes whichever lab's cluster exists.
+learning. `../cleanup.sh` removes whichever lab's cluster exists.
 
 ## The lessons (run them in order)
 
@@ -27,7 +27,7 @@ lab's cluster and installs the snapshot API that Lesson 02 uses.
 | Tool | Why |
 |------|-----|
 | **Docker** + ~4GB of RAM free | each kind "node" is a container; Ceph adds a monitor, a manager, two OSDs and the CSI plugin pods |
-| **kind** ≥ v0.31, **kubectl**, **git**, **Internet access** | the cluster, and about 1GB of Ceph images |
+| **kind** ≥ v0.31, **kubectl**, **git**, **Internet access** | the cluster, and several GB of Ceph images |
 | **A disposable machine** | Rook's OSD discovery gets access to device nodes; this lab fences it by naming one device per node, but see Lesson 01 |
 
 No GPU is needed. Linux is assumed (the lab reaches into Docker).

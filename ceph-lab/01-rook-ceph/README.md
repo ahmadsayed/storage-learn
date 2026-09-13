@@ -54,8 +54,8 @@ driver.csi.ceph.io/rook-ceph.cephfs.csi.ceph.com created
 deployment.apps/rook-ceph-operator created
 ```
 
-> ⚠️ **Warning:** `csi-operator.yaml` is new in Rook 1.20 and is not optional. In
-> 1.20 the CSI settings **moved out of the `rook-ceph-operator-config`
+> ⚠️ **Warning:** `csi-operator.yaml` has existed since Rook 1.18, but 1.20 makes
+> it mandatory: the CSI settings **moved out of the `rook-ceph-operator-config`
 > ConfigMap** into `OperatorConfig` and `Driver` custom resources, so the older
 > `crds + common + operator` sequence produces a cluster with no CSI drivers at
 > all — and no error explaining why.
@@ -145,7 +145,6 @@ W | inventory: skipping device "loop0". exit status 32
 D | sys: lsblk output: "SIZE=\"8589934592\" ROTA=\"0\" ... NAME=\"/dev/loop100\" ... FSTYPE=\"\""
 D | exec: Running command: udevadm info --query=property /dev/loop100
 W | inventory: skipping device "loop101". exit status 32
-D | sys: lsblk output: "... NAME=\"/dev/loop110\" MOUNTPOINT=\"/rootfs/var/lib/longhorn\" ..."
 W | inventory: skipping device "nvme0n1" because it has child, considering the child instead.
 ```
 
@@ -186,6 +185,10 @@ kubectl -n rook-ceph rollout status deploy/rook-ceph-tools --timeout=240s
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
 ```
 
+The first `ceph status` this cluster ever gave — recorded **before** the two fixes
+below were folded into `cluster.yaml`, so with the shipped file your first status
+already reads `HEALTH_OK (muted: …)`:
+
 ```console
 $ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
   cluster:
@@ -219,7 +222,8 @@ Three warnings, two different kinds of problem:
   because they say nothing about whether data is safe. This lab runs on a 7.2.3
   kernel, so it needs no aes setting — and it mutes, rather than fixes, them.
 
-Both are handled in `cluster.yaml`; `ceph status` then reads:
+Both fixes are in the shipped `cluster.yaml`, so this is what `ceph status` reads
+from the start now:
 
 ```console
 $ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
@@ -348,7 +352,9 @@ hello from rwx-writer at 2026-09-13T05:05:09Z
 
 Two pods, two different nodes, one PVC, and the second one reads what the first
 wrote. `ACCESS MODES: RWX` is not decoration — with `rook-ceph-block` this pod
-pair is impossible, and the API server would have rejected the second pod's mount.
+pair is impossible: the second pod would sit `Pending` forever, and its events
+would say `Multi-Attach error` — RWO means one *node*, and these two pods are on
+different nodes.
 
 > 💡 **Tip:** CephFS data is written by the pods directly to the OSDs; the MDS
 > only serves metadata. That is why one MDS can serve many clients, and why an
@@ -389,10 +395,13 @@ kubectl -n rook-ceph patch cephcluster rook-ceph --type merge \
 kubectl -n rook-ceph delete cephcluster rook-ceph
 ```
 
-`../cleanup.sh` does the whole sequence, including the CSI `OperatorConfig` and
-`Driver` objects that Rook 1.20 adds and the older teardown docs do not mention.
+`../../cleanup.sh ceph` from the repository root does the whole sequence, including
+the CSI `OperatorConfig` and `Driver` objects that Rook 1.20 adds and the older
+teardown docs do not mention.
 
 ## Next
 
-Ceph is one of the two storage systems this course installs. The other one, with its
-own cluster and its own failure modes, is the [Longhorn lab](../../longhorn-lab/README.md).
+Continue to [Lesson 02 — Day-2 operations](../02-day2/README.md): grow the volume
+you just made, snapshot and restore it, and kill a storage node underneath it. The
+other lab, with its own cluster and its own failure modes, is the
+[Longhorn lab](../../longhorn-lab/README.md).

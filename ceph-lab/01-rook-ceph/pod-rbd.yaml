@@ -1,5 +1,6 @@
-# Writes a timestamp and the node name into the RBD volume. The pod will be
-# deleted and recreated in Lesson 04 to prove the data is in Ceph, not here.
+# Writes a timestamp and the node name into the RBD volume. Lesson 02 mounts the
+# same claim from other pods (rbd-verify, then a restored volume) to prove the
+# data is in Ceph, not here.
 apiVersion: v1
 kind: Pod
 metadata:

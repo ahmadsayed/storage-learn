@@ -14,7 +14,7 @@ spec:
         - sh
         - -c
         - |
-          echo "written $(date -u +%FT%TZ) by a pod on $(hostname)" > /data/proof.txt
+          echo "written on $(hostname) at $(date -u +%FT%TZ)" > /data/proof.txt
           sync
           cat /data/proof.txt
           df -h /data

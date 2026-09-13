@@ -65,7 +65,7 @@
   <text x="508" y="534" text-anchor="middle" font-size="11.5" fill="#166534">= one replica per node,</text>
   <text x="508" y="549" text-anchor="middle" font-size="11.5" fill="#166534">each a sparse file on a disk</text>
   <line x1="638" y1="528" x2="686" y2="528" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="700" y="518" font-size="12.5" font-weight="bold" fill="#166534">3 replicas, 3 nodes</text>
+  <text x="700" y="518" font-size="12.5" font-weight="bold" fill="#166534">2 replicas, 2 nodes</text>
   <text x="700" y="536" font-size="11.5" fill="#166534">synchronous, rebuilt automatically</text>
   <text x="700" y="554" font-size="11.5" fill="#166534">one node dies &#8594; degraded, then healthy</text>
 

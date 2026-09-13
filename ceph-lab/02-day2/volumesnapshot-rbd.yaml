@@ -6,5 +6,5 @@ metadata:
 spec:
   volumeSnapshotClassName: rook-ceph-rbd-snapclass
   source:
-    # The claim lives in the ceph-demo namespace from Lesson 02.
+    # The claim lives in the ceph-demo namespace from Lesson 01.
     persistentVolumeClaimName: rbd-pvc

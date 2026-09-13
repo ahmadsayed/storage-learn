@@ -24,7 +24,7 @@ that node returns. All four are demonstrated below with the machine's own output
 - `values.yaml` — the install: pinned chart version plus every lab-sized override, each commented.
 - `namespace.yaml`, `pvc.yaml`, `pod-writer.yaml` — a 2Gi claim, and a pod that writes into it on `k3s-agent`.
 - `pod-reader-other-node.yaml` — reads the same claim from `k3s-server`: the durability proof.
-- `pod-during-failure.yaml` — writes to the volume every 10 seconds, for the node-failure drill.
+- `pod-during-failure.yaml` — writes to the volume every 10 seconds (24 writes, about four minutes, then it exits), for the node-failure drill.
 
 ## Step 1 — Install Longhorn
 
@@ -54,17 +54,17 @@ $ kubectl -n longhorn-system get pods | grep -c Running
 14
 
 $ kubectl get storageclass
-NAME                 PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE   ALLOWVOLUMEEXPANSION
-longhorn (default)   driver.longhorn.io      Delete          Immediate           true
-longhorn-static      driver.longhorn.io      Delete          Immediate           true
-standard (default)   rancher.io/local-path   Delete          WaitForFirstConsumer false
+NAME                   PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE   ALLOWVOLUMEEXPANSION
+local-path (default)   rancher.io/local-path   Delete          WaitForFirstConsumer false
+longhorn (default)     driver.longhorn.io      Delete          Immediate           true
+longhorn-static        driver.longhorn.io      Delete          Immediate           true
 ```
 
 > 💡 **Tip:** there are now **two default StorageClasses**. `persistence.defaultClass`
-> made `longhorn` a default, but k3s' `standard` still is one too. Kubernetes allows
-> that, and a PVC with no `storageClassName` gets whichever default was created *most
-> recently*. Remove the other if you keep Longhorn as the default:
-> `kubectl annotate sc standard storageclass.kubernetes.io/is-default-class-`
+> made `longhorn` a default, but k3s' bundled `local-path` still is one too. Kubernetes
+> allows that, and a PVC with no `storageClassName` gets whichever default was created
+> *most recently*. Remove the other if you keep Longhorn as the default:
+> `kubectl annotate sc local-path storageclass.kubernetes.io/is-default-class-`
 
 ## Step 2 — What Longhorn made of the nodes
 
@@ -90,11 +90,14 @@ node carries the label from Lesson 00. And its accounting is *correct*:
 ```console
 $ kubectl -n longhorn-system get nodes.longhorn.io k3s-server \
     -o jsonpath='{.status.diskStatus}' | grep -E 'filesystemType|storageMaximum|storageAvailable|storageScheduled'
-"filesystemType": "ext2/ext3",          <- the ext4 root, correctly identified
+"filesystemType": "ext2/ext3",          <- Longhorn's label for the ext family: this is the ext4 root
 "storageAvailable": 13212057600,        <- 12.3 GiB free
 "storageMaximum":  19682557952,         <- 18.3 GiB total
 "storageScheduled": 2147483648,         <- 2 GiB of replicas already scheduled
 ```
+
+(`storageScheduled` reads 2 GiB here because this capture was taken after Step 3's
+volume existed; before the first volume it reads 0.)
 
 `storageReserved` is 5.9GB, which is 30% of that 18.3GB — the chart default doing
 arithmetic on real numbers. Compare that with the same three commands against a kind
@@ -142,8 +145,8 @@ pvc-41633c7b-...-r-36a98a45                           k3s-server   running
 ```
 
 `STATE: attached`, `ROBUSTNESS: healthy`, and **two replicas, one on each node** —
-which is `defaultClassReplicaCount: 2` doing its job. The `volumeHandle` is simply
-the PVC's UID, so the link between Kubernetes and Longhorn is easy to follow.
+which is `defaultClassReplicaCount: 2` doing its job. The `volumeHandle` is `pvc-`
+plus the claim's UID, so the link between Kubernetes and Longhorn is easy to follow.
 
 > 🎓 **Insight:** anti-affinity was not something you had to enable. Longhorn
 > defaults to `replicaSoftAntiAffinity: false`, meaning it refuses to put two healthy
@@ -182,7 +185,7 @@ single-node `local-path` volume cannot keep, and it is worth doing by hand once.
 
 ```bash
 kubectl apply -f pod-during-failure.yaml          # writes on k3s-server
-./vm.sh ssh agent -- 'sudo poweroff'              # the node simply disappears
+../00-cluster-setup/vm.sh ssh agent -- 'sudo poweroff'   # the node simply disappears
 ```
 
 ```console
@@ -200,7 +203,11 @@ NAME                                                  NODE         STATE
 pvc-41633c7b-...-r-16bebce6                           k3s-agent    stopped
 pvc-41633c7b-...-r-36a98a45                           k3s-server   running
 
-$ kubectl -n lh-demo logs lh-continuous-writer | tail -4
+$ kubectl -n lh-demo logs lh-continuous-writer | tail -8
+write 17 at 2026-09-13T08:31:09Z from lh-continuous-writer
+write 18 at 2026-09-13T08:31:19Z from lh-continuous-writer
+write 19 at 2026-09-13T08:31:29Z from lh-continuous-writer
+write 20 at 2026-09-13T08:31:39Z from lh-continuous-writer
 write 21 at 2026-09-13T08:31:49Z from lh-continuous-writer
 write 22 at 2026-09-13T08:31:59Z from lh-continuous-writer
 write 23 at 2026-09-13T08:32:09Z from lh-continuous-writer
@@ -225,9 +232,14 @@ replication:
 ## Step 6 — Bring the node back, and watch the copy return
 
 ```bash
-./vm.sh start agent        # the same VM, the same disk — a reboot, not a reinstall
-kubectl apply -f pod-during-failure.yaml   # (or any pod) to keep the volume attached
+../00-cluster-setup/vm.sh start agent   # the same VM, the same disk — a reboot, not a reinstall
+kubectl -n lh-demo delete pod lh-continuous-writer --ignore-not-found   # it exited after write 24
+kubectl apply -f pod-during-failure.yaml   # a fresh pod keeps the volume attached
 ```
+
+(The delete matters: the writer has `restartPolicy: Never` and had already
+completed, so re-applying the unchanged manifest would print `unchanged` and the
+volume would stay detached.)
 
 ```console
 $ kubectl -n longhorn-system get volumes.longhorn.io    # polled every 15s
@@ -245,7 +257,8 @@ Longhorn used it to bring the returning copy back in sync.
 > `robustness` while a volume is **attached**. If the pod holding the volume exits
 > during the drill, the volume detaches and `robustness` reads `unknown`, which looks
 > like a failure and is not. Keep a pod on the volume for the whole drill — that is
-> what `pod-during-failure.yaml` is for.
+> what `pod-during-failure.yaml` is for. Note that it stops after 24 writes (about
+> four minutes): if your drill runs longer, delete and re-apply it as Step 6 does.
 
 ## Appendix — why this lab is not on kind
 
@@ -315,5 +328,6 @@ want Longhorn, give it real nodes** — VMs count, as this lab shows.
 
 That is the Longhorn lab. The Ceph lab makes the same promises with a different data
 path — no userspace daemon at all — and compares the two honestly:
-[the Ceph lab](../../ceph-lab/README.md). To remove this lab, `./vm.sh destroy` (or
-`../../cleanup.sh longhorn`, which does that for you).
+[the Ceph lab](../../ceph-lab/README.md). To remove this lab,
+`../00-cluster-setup/vm.sh destroy` (or `../../cleanup.sh longhorn`, which does that
+for you).

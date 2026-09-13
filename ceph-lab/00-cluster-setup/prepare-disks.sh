@@ -17,8 +17,7 @@ OSD_NODES=(csilab-worker csilab-worker2)
 
 # Loop devices are kernel-global: /dev/loop100 in worker 1 and /dev/loop100 in
 # worker 2 are the same device. Each node therefore gets its own index, or two
-# OSDs would end up sharing one backing file. The Longhorn lab uses 220+ so the
-# two labs can run side by side.
+# OSDs would end up sharing one backing file.
 declare -A OSD_LOOP=([csilab-worker]=100 [csilab-worker2]=101)
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }

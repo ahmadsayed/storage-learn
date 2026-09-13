@@ -6,7 +6,7 @@ anyone made it on purpose. These labs are about that decision: what a
 what changes when the storage behind a claim is **replicated across nodes**
 instead of sitting in a directory on one machine.
 
-Two storage systems, two labs, **two separate kind clusters**:
+Two storage systems, two labs, **two separate clusters**:
 
 | Lab | Cluster | What it answers |
 |-----|---------|-----------------|
@@ -35,9 +35,9 @@ each lab, never at the top of this repository:
 |---|--------|-------------|
 | **00** | [CSI fundamentals: PV, PVC, StorageClass, and where CSI plugs in](00-csi-fundamentals/README.md) | static vs dynamic provisioning, then the Kubernetes reference CSI driver, its socket, a `VolumeAttachment`, and a snapshot/restore |
 
-Run it on whichever lab cluster you have up — it needs a cluster with **no** CSI
-driver yet, and it is where `local-path` (dynamic, not CSI) and a real CSI driver
-get compared side by side. It was recorded on the Ceph lab's cluster.
+Run it on the Ceph lab's cluster — it needs a cluster with **no** CSI driver yet,
+and its manifests pin `csilab-worker` by name. It is where `local-path` (dynamic,
+not CSI) and a real CSI driver get compared side by side.
 
 ## The Ceph lab
 
@@ -58,7 +58,7 @@ get compared side by side. It was recorded on the Ceph lab's cluster.
 
 > The diagram is the mental model for both labs: the pod only ever names a PVC.
 > Whether that claim becomes a directory on one node, an RBD image replicated
-> across two OSDs, or three synchronous replicas of a sparse file is decided by one
+> across two OSDs, or two synchronous replicas of a sparse file is decided by one
 > line — `storageClassName` — and everything after that is the driver's business.
 
 ## Requirements
@@ -68,7 +68,7 @@ get compared side by side. It was recorded on the Ceph lab's cluster.
 | **Docker** + **kind** ≥ v0.31 | the Ceph lab's cluster |
 | **qemu** + **`/dev/kvm`** + **`genisoimage`** | the Longhorn lab's two VMs (no host root needed) |
 | **kubectl**, **git**, **helm** ≥ v3.13 | driving the clusters and installing the storage systems |
-| **Internet access** | node images, plus ~1GB of Ceph or ~500MB of Longhorn images |
+| **Internet access** | node images, plus several GB of Ceph or about 1GB of Longhorn images |
 | **~4GB of free RAM per lab** | do not run both clusters at once on a laptop; each storage system brings real daemons |
 | **A disposable machine** | Rook's OSD discovery gets access to device nodes (it will see your real disks). Lesson 01 of the Ceph lab shows that log line, and explains why each lab names its devices explicitly |
 
@@ -93,9 +93,11 @@ export KUBECONFIG=$PWD/k3s.yaml
 ```
 
 > 💡 **Tip:** give each cluster its own kubeconfig — `kind create cluster
-> --kubeconfig ~/.kube/csilab.yaml`, then `export KUBECONFIG=~/.kube/csilab.yaml` —
-> so a later `kubectl delete` cannot land on the other lab, or on some unrelated
-> cluster you keep. That is how these lessons were recorded.
+> --kubeconfig ../../.csi-lab.kubeconfig` (run from `ceph-lab/00-cluster-setup`,
+> so the file lands at the repository root), then `export
+> KUBECONFIG=…/.csi-lab.kubeconfig` — so a later `kubectl delete` cannot land
+> on the other lab, or on some unrelated cluster you keep. That is how these
+> lessons were recorded, and it is the file `cleanup.sh` looks for first.
 
 ## Ceph or Longhorn?
 
@@ -135,7 +137,7 @@ an incident. Pick the one whose failure modes you have seen.
 ./cleanup.sh                 # both labs, checking what exists first
 ./cleanup.sh ceph            # only the Ceph lab
 ./cleanup.sh longhorn        # only the Longhorn lab
-KEEP_CLUSTERS=1 ./cleanup.sh # uninstall the storage systems, keep the nodes
+KEEP_CLUSTERS=1 ./cleanup.sh # uninstall Rook Ceph, keep the nodes/VMs (Longhorn inside the VMs is left alone)
 ```
 
 It is idempotent and skips anything that is not there, and it detaches the loop
@@ -149,15 +151,15 @@ file no longer exists.
 > holding loop devices whose backing file is gone, which is exactly what happened
 > when this course was recorded — five of them, and `cleanup.sh` reported "no stale
 > loop devices" while they sat there, because it looked for the classic `lost` marker
-> and this kernel (6.15) prints an empty status field instead. The script now detects
+> and this kernel (7.2.3) prints an empty status field instead. The script now detects
 > both forms, reports them, and detaches them itself **if** it can use sudo without a
 > password — otherwise it prints the one command that finishes the job, because
 > detaching a host loop device needs root and this course otherwise assumes none:
 >
 > ```console
-> $ ./cleanup.sh longhorn
+> $ ./cleanup.sh
 >   5 stale loop devices: their backing file is gone, the host still holds them
->     /dev/loop101: []: (/lib/rook-osd/osd.img (deleted))
+>     /dev/loop101: []: (/var/lib/rook-osd/osd.img (deleted))
 >     …
 >     detaching needs root, which this script does not have; run:
 >       sudo losetup -d /dev/loop100 /dev/loop101 /dev/loop220 /dev/loop221 /dev/loop222
