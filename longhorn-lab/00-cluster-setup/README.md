@@ -119,10 +119,17 @@ Four things are load-bearing in that output.
 > device with two owners.
 
 > 🎓 **Insight:** note that `live iscsid processes` is **0 on one node and 2 on the
-> others** — the same script, the same image, different outcomes, because the
-> daemon is started on demand and exits when idle. Keep that in mind: Lesson 01
-> shows Longhorn failing for a reason that survives both cases, and the daemon
-> lifecycle is the *second* thing in its way, not the first.
+> others** — one script, one image, different outcomes, because the daemon is
+> socket-activated and exits again when it has served. Do not read a `2` as "the
+> problem is solved": Lesson 01 tests both states and shows the same failure,
+> because the obstacle is a namespace mismatch, not the daemon's liveness.
+>
+> ⚠️ **One symptom you may meet in the journal, and should not over-read.** When
+> `iscsid` is started while systemd already owns the socket, it logs
+> `sendmsg: bug? ctrl_fd 5` and exits with status 255. It looks like the cause of
+> everything; it is not. The engine fails identically when that message never
+> appears. Treat it as a symptom of iscsid's control channel misbehaving inside a
+> container, which is worth knowing but was not chased to a root cause here.
 
 ## Verify
 
