@@ -31,7 +31,7 @@ Decisions already made with the user:
   generation, qemu launch, SSH helpers, k3s readiness waits, kubeconfig fetch,
   and the `up|status|ssh|kubeconfig|start|stop|down|destroy` subcommands.
 - Each lab keeps a thin `00-cluster-setup/vm.sh` that sets per-lab config and
-  sources `../..//vm-lib.sh`:
+  sources `../../vm-lib.sh`:
 
   | Setting | Longhorn lab | Ceph lab |
   |---------|-------------|----------|
@@ -124,7 +124,8 @@ Pedagogy untouched; substrate plumbing changes:
 - `cleanup.sh` rewritten as described above; stale-loop detection removed
   (nothing creates loop devices anymore).
 - `.storage-lab/STYLE.md` lab-facts section updated (no kind facts; VM facts
-  for both labs; the kubectl wrapper repins to the ceph lab's k3s kubeconfig).
+  for both labs; the kubectl wrapper `.storage-lab/k` repins
+  `KUBECONFIG` to `ceph-lab/00-cluster-setup/k3s.yaml`).
 
 ## Error handling / risks
 
